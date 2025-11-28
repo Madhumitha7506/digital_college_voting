@@ -1,220 +1,173 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Vote as VoteIcon, CheckCircle, ArrowLeft } from "lucide-react";
-import type { Session } from "@supabase/supabase-js";
+import { useNavigate } from "react-router-dom";
 
 interface Candidate {
-  id: string;
-  name: string;
-  position: string;
-  photo_url: string | null;
-  manifesto: string | null;
+  Id: number;
+  Name: string;
+  Position: string;
+  Manifesto?: string;
+  PhotoUrl?: string;
 }
 
 const Vote = () => {
-  const navigate = useNavigate();
-  const [session, setSession] = useState<Session | null>(null);
+  const [candidates, setCandidates] = useState<Record<string, Candidate[]>>({});
+  const [selectedCandidates, setSelectedCandidates] = useState<Record<string, Candidate | null>>({});
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
-  const [votes, setVotes] = useState<Record<string, string>>({});
-  const [profile, setProfile] = useState<any>(null);
+  const navigate = useNavigate();
 
+  // ✅ Fetch candidates
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (!session) {
-        navigate("/login");
-      } else {
-        fetchData(session.user.id);
-      }
-    });
+    const fetchCandidates = async () => {
+      try {
+        const token = localStorage.getItem("token");
+        if (!token) {
+          toast.error("Please log in first.");
+          navigate("/login");
+          return;
+        }
 
-    const subscription = supabase.auth.onAuthStateChange((event, session) => {
-      setSession(session);
-      if (!session) {
-        navigate("/login");
-      }
-    });
+        const response = await fetch(`${import.meta.env.VITE_API_URL}/candidates`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
 
-    return () => subscription.data.subscription.unsubscribe();
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Failed to fetch candidates");
+
+        // ✅ Group by position
+        const grouped = data.reduce((acc: Record<string, Candidate[]>, c: Candidate) => {
+          if (!acc[c.Position]) acc[c.Position] = [];
+          acc[c.Position].push(c);
+          return acc;
+        }, {});
+
+        setCandidates(grouped);
+      } catch (error: any) {
+        console.error("Error fetching candidates:", error);
+        toast.error(error.message || "Failed to load candidates");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchCandidates();
   }, [navigate]);
 
-  const fetchData = async (userId: string) => {
-    try {
-      const { data: profileData, error: profileError } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", userId)
-        .single();
-
-      if (profileError) throw profileError;
-      setProfile(profileData);
-
-      if (profileData.has_voted) {
-        toast.info("You have already voted");
-        navigate("/dashboard");
-        return;
-      }
-
-      const { data: candidatesData, error: candidatesError } = await supabase
-        .from("candidates")
-        .select("*")
-        .order("position");
-
-      if (candidatesError) throw candidatesError;
-      setCandidates(candidatesData);
-    } catch (error: any) {
-      console.error("Error:", error);
-      toast.error("Failed to load voting data");
-    } finally {
-      setLoading(false);
-    }
+  // ✅ Handle candidate selection
+  const handleSelect = (position: string, candidate: Candidate) => {
+    setSelectedCandidates((prev) => ({
+      ...prev,
+      [position]: candidate,
+    }));
   };
 
-  const positions = Array.from(new Set(candidates.map(c => c.position)));
-
+  // ✅ Handle vote submission
   const handleSubmit = async () => {
-    if (Object.keys(votes).length !== positions.length) {
-      toast.error("Please select a candidate for all positions");
+    const votes = Object.entries(selectedCandidates).map(([position, candidate]) => ({
+      position,
+      candidateId: candidate?.Id,
+    }));
+
+    if (votes.length === 0 || votes.some((v) => !v.candidateId)) {
+      toast.error("Please select a candidate for each position before submitting.");
       return;
     }
 
     try {
-      setSubmitting(true);
+      const token = localStorage.getItem("token");
+      if (!token) {
+        toast.error("You must be logged in to vote.");
+        navigate("/login");
+        return;
+      }
 
-      const voteRecords = Object.entries(votes).map(([position, candidateId]) => ({
-        user_id: session!.user.id,
-        candidate_id: candidateId,
-        position: position as "president" | "vice_president" | "secretary" | "treasurer"
-      }));
+      const payload = { votes };
 
-      const { error: voteError } = await supabase
-        .from("votes")
-        .insert(voteRecords);
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/votes`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
 
-      if (voteError) throw voteError;
+      const data = await response.json();
 
-      const { error: profileError } = await supabase
-        .from("profiles")
-        .update({ has_voted: true })
-        .eq("id", session!.user.id);
+      if (!response.ok) throw new Error(data.error || "Failed to submit votes");
 
-      if (profileError) throw profileError;
-
-      toast.success("Your vote has been cast successfully!");
+      toast.success("✅ Your votes have been submitted successfully!");
       navigate("/results");
     } catch (error: any) {
-      console.error("Error:", error);
-      toast.error(error.message || "Failed to submit vote");
-    } finally {
-      setSubmitting(false);
+      console.error("Vote submission error:", error);
+      toast.error(error.message || "Failed to submit votes");
     }
   };
 
-  if (loading || !session) {
+  if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Loading...</p>
-        </div>
+      <div className="flex justify-center items-center min-h-screen text-muted-foreground">
+        Loading candidates...
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-secondary/5">
-      <header className="bg-card border-b border-border sticky top-0 z-10">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <Button variant="ghost" onClick={() => navigate("/dashboard")}>
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Dashboard
-          </Button>
-          <h1 className="text-xl font-bold">Cast Your Vote</h1>
-          <div className="w-24"></div>
-        </div>
-      </header>
+    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-secondary/5 p-6">
+      <div className="max-w-6xl mx-auto">
+        <h1 className="text-3xl font-bold text-center mb-8">Vote for Your Candidate</h1>
 
-      <main className="container mx-auto px-4 py-8 max-w-4xl">
-        <div className="mb-8 text-center">
-          <div className="w-16 h-16 bg-primary rounded-full flex items-center justify-center mx-auto mb-4">
-            <VoteIcon className="w-8 h-8 text-primary-foreground" />
-          </div>
-          <h2 className="text-3xl font-bold mb-2">Student Council Election</h2>
-          <p className="text-muted-foreground">Select one candidate for each position</p>
-        </div>
-
-        <div className="space-y-8">
-          {positions.map((position) => (
-            <Card key={position}>
+        {Object.keys(candidates).length === 0 ? (
+          <p className="text-center text-muted-foreground">No candidates available yet.</p>
+        ) : (
+          Object.entries(candidates).map(([position, candidateList]) => (
+            <Card key={position} className="mb-6">
               <CardHeader>
-                <CardTitle className="capitalize">{position.replace("_", " ")}</CardTitle>
-                <CardDescription>Select your preferred candidate</CardDescription>
+                <CardTitle className="capitalize text-xl font-semibold text-primary">
+                  {position}
+                </CardTitle>
               </CardHeader>
-              <CardContent>
-                <RadioGroup
-                  value={votes[position]}
-                  onValueChange={(value) => setVotes({ ...votes, [position]: value })}
-                >
-                  <div className="space-y-4">
-                    {candidates
-                      .filter((c) => c.position === position)
-                      .map((candidate) => (
-                        <div
-                          key={candidate.id}
-                          className="flex items-center space-x-4 p-4 border border-border rounded-lg hover:border-primary transition-colors"
-                        >
-                          <RadioGroupItem value={candidate.id} id={candidate.id} />
-                          <Label
-                            htmlFor={candidate.id}
-                            className="flex-1 cursor-pointer"
-                          >
-                            <div className="flex items-start gap-4">
-                              {candidate.photo_url && (
-                                <img
-                                  src={candidate.photo_url}
-                                  alt={candidate.name}
-                                  className="w-16 h-16 rounded-full object-cover"
-                                />
-                              )}
-                              <div className="flex-1">
-                                <p className="font-semibold">{candidate.name}</p>
-                                {candidate.manifesto && (
-                                  <p className="text-sm text-muted-foreground mt-1">
-                                    {candidate.manifesto}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          </Label>
-                        </div>
-                      ))}
-                  </div>
-                </RadioGroup>
+              <CardContent className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                {candidateList.map((candidate) => {
+                  const isSelected = selectedCandidates[position]?.Id === candidate.Id;
+                  return (
+                    <div
+                      key={candidate.Id}
+                      onClick={() => handleSelect(position, candidate)}
+                      className={`flex flex-col items-center p-4 border rounded-2xl cursor-pointer transition ${
+                        isSelected
+                          ? "border-primary bg-primary/10 shadow-md"
+                          : "border-border hover:border-primary/40"
+                      }`}
+                    >
+                      <img
+                        src={candidate.PhotoUrl || "https://via.placeholder.com/100"}
+                        alt={candidate.Name}
+                        className="w-20 h-20 rounded-full object-cover mb-3 border border-primary/30"
+                      />
+                      <h3 className="font-semibold text-lg">{candidate.Name}</h3>
+                      <p className="text-sm text-muted-foreground mb-2">{candidate.Position}</p>
+                      <p className="text-xs text-center text-muted-foreground">{candidate.Manifesto}</p>
+                    </div>
+                  );
+                })}
               </CardContent>
             </Card>
-          ))}
-        </div>
+          ))
+        )}
 
-        <div className="mt-8 flex justify-center">
+        <div className="text-center mt-6">
           <Button
-            size="lg"
             onClick={handleSubmit}
-            disabled={submitting || Object.keys(votes).length !== positions.length}
-            className="min-w-[200px]"
+            className="px-6 py-2 text-lg font-semibold"
+            disabled={loading}
           >
-            <CheckCircle className="w-5 h-5 mr-2" />
-            {submitting ? "Submitting..." : "Submit Vote"}
+            Submit Vote
           </Button>
         </div>
-      </main>
+      </div>
     </div>
   );
 };

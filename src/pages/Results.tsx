@@ -1,186 +1,117 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
-import { ArrowLeft, Trophy, Users } from "lucide-react";
+import { toast } from "sonner";
+import { BarChart3, ArrowLeft } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
-interface VoteCount {
-  candidate_id: string;
-  candidate_name: string;
-  position: string;
-  vote_count: number;
+interface CandidateResult {
+  Id: number;
+  Name: string;
+  Position: string;
+  PhotoUrl: string;
+  VoteCount: number;
 }
 
 const Results = () => {
-  const navigate = useNavigate();
+  const [results, setResults] = useState<Record<string, CandidateResult[]>>({});
   const [loading, setLoading] = useState(true);
-  const [results, setResults] = useState<VoteCount[]>([]);
-  const [totalVoters, setTotalVoters] = useState(0);
+  const navigate = useNavigate();
 
   useEffect(() => {
-    fetchResults();
-
-    const channel = supabase
-      .channel("results-updates")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "votes",
-        },
-        () => {
-          fetchResults();
+    const fetchResults = async () => {
+      try {
+        const token = localStorage.getItem("token");
+        if (!token) {
+          toast.error("Please log in to view results.");
+          navigate("/login");
+          return;
         }
-      )
-      .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
+        const response = await fetch(`${import.meta.env.VITE_API_URL}/votes/results`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) throw new Error(data.error || "Failed to fetch results");
+
+        // ✅ Group candidates by position
+        const grouped = data.reduce((acc: Record<string, CandidateResult[]>, candidate: CandidateResult) => {
+          if (!acc[candidate.Position]) acc[candidate.Position] = [];
+          acc[candidate.Position].push(candidate);
+          return acc;
+        }, {});
+
+        setResults(grouped);
+      } catch (error: any) {
+        console.error("Error fetching results:", error);
+        toast.error(error.message || "Failed to load results");
+      } finally {
+        setLoading(false);
+      }
     };
-  }, []);
 
-  const fetchResults = async () => {
-    try {
-      const { data: votesData, error: votesError } = await supabase
-        .from("votes")
-        .select(`
-          candidate_id,
-          position,
-          candidates (name)
-        `);
-
-      if (votesError) throw votesError;
-
-      const voteCounts: Record<string, VoteCount> = {};
-      votesData.forEach((vote: any) => {
-        const key = `${vote.candidate_id}-${vote.position}`;
-        if (!voteCounts[key]) {
-          voteCounts[key] = {
-            candidate_id: vote.candidate_id,
-            candidate_name: vote.candidates.name,
-            position: vote.position,
-            vote_count: 0,
-          };
-        }
-        voteCounts[key].vote_count++;
-      });
-
-      setResults(Object.values(voteCounts));
-
-      const { count, error: countError } = await supabase
-        .from("profiles")
-        .select("*", { count: "exact", head: true })
-        .eq("has_voted", true);
-
-      if (countError) throw countError;
-      setTotalVoters(count || 0);
-    } catch (error: any) {
-      console.error("Error fetching results:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const positions = Array.from(new Set(results.map((r) => r.position)));
-
-  const getPositionResults = (position: string) => {
-    const positionResults = results.filter((r) => r.position === position);
-    const totalVotes = positionResults.reduce((sum, r) => sum + r.vote_count, 0);
-    return positionResults
-      .map((r) => ({
-        ...r,
-        percentage: totalVotes > 0 ? (r.vote_count / totalVotes) * 100 : 0,
-      }))
-      .sort((a, b) => b.vote_count - a.vote_count);
-  };
+    fetchResults();
+  }, [navigate]);
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Loading results...</p>
-        </div>
+      <div className="flex justify-center items-center min-h-screen text-lg text-muted-foreground">
+        Loading results...
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-secondary/5">
-      <header className="bg-card border-b border-border sticky top-0 z-10">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <Button variant="ghost" onClick={() => navigate("/")}>
+    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-secondary/5 p-6">
+      <div className="max-w-5xl mx-auto space-y-8">
+        <div className="flex items-center justify-between">
+          <h1 className="text-3xl font-bold flex items-center gap-2">
+            <BarChart3 className="w-7 h-7 text-primary" />
+            Election Results
+          </h1>
+          <Button variant="outline" onClick={() => navigate("/dashboard")}>
             <ArrowLeft className="w-4 h-4 mr-2" />
-            Back
+            Back to Dashboard
           </Button>
-          <h1 className="text-xl font-bold">Live Results</h1>
-          <div className="w-24"></div>
-        </div>
-      </header>
-
-      <main className="container mx-auto px-4 py-8 max-w-4xl">
-        <div className="mb-8 text-center">
-          <div className="w-16 h-16 bg-primary rounded-full flex items-center justify-center mx-auto mb-4">
-            <Trophy className="w-8 h-8 text-primary-foreground" />
-          </div>
-          <h2 className="text-3xl font-bold mb-2">Election Results</h2>
-          <div className="flex items-center justify-center gap-2 text-muted-foreground">
-            <Users className="w-4 h-4" />
-            <p>{totalVoters} students have voted</p>
-          </div>
         </div>
 
-        <div className="space-y-8">
-          {positions.map((position) => {
-            const positionResults = getPositionResults(position);
-            const winner = positionResults[0];
-
-            return (
-              <Card key={position}>
-                <CardHeader>
-                  <CardTitle className="capitalize">
-                    {position.replace("_", " ")}
-                  </CardTitle>
-                  <CardDescription>
-                    {winner && `Leading: ${winner.candidate_name} with ${winner.vote_count} votes`}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {positionResults.map((result, index) => (
-                      <div key={result.candidate_id} className="space-y-2">
-                        <div className="flex justify-between items-center">
-                          <div className="flex items-center gap-2">
-                            {index === 0 && (
-                              <Trophy className="w-5 h-5 text-accent" />
-                            )}
-                            <span className="font-medium">{result.candidate_name}</span>
-                          </div>
-                          <div className="text-sm text-muted-foreground">
-                            {result.vote_count} votes ({result.percentage.toFixed(1)}%)
-                          </div>
-                        </div>
-                        <Progress value={result.percentage} className="h-2" />
-                      </div>
-                    ))}
+        {Object.keys(results).length === 0 ? (
+          <p className="text-center text-muted-foreground mt-10">
+            No results available yet. Voting may still be in progress.
+          </p>
+        ) : (
+          Object.entries(results).map(([position, candidates]) => (
+            <Card key={position}>
+              <CardHeader>
+                <CardTitle className="capitalize text-xl font-semibold text-primary">
+                  {position}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                {candidates.map((candidate) => (
+                  <div
+                    key={candidate.Id}
+                    className="flex flex-col items-center bg-card p-4 rounded-2xl shadow hover:shadow-lg transition"
+                  >
+                    <img
+                      src={candidate.PhotoUrl}
+                      alt={candidate.Name}
+                      className="w-20 h-20 rounded-full object-cover mb-3 border border-primary/30"
+                    />
+                    <h3 className="font-semibold text-lg">{candidate.Name}</h3>
+                    <p className="text-muted-foreground text-sm mb-2">{candidate.Position}</p>
+                    <span className="text-2xl font-bold text-primary">
+                      🗳 {candidate.VoteCount}
+                    </span>
                   </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-
-        {results.length === 0 && (
-          <Card>
-            <CardContent className="text-center py-12">
-              <p className="text-muted-foreground">No votes have been cast yet</p>
-            </CardContent>
-          </Card>
+                ))}
+              </CardContent>
+            </Card>
+          ))
         )}
-      </main>
+      </div>
     </div>
   );
 };
