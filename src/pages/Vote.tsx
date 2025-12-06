@@ -4,19 +4,31 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 
+import maleAvatar from "@/assets/male.png";
+import femaleAvatar from "@/assets/female.png";
+
 interface Candidate {
   Id: number;
   Name: string;
   Position: string;
   Manifesto?: string;
   PhotoUrl?: string;
+  Gender?: string;
 }
 
 const Vote = () => {
   const [candidates, setCandidates] = useState<Record<string, Candidate[]>>({});
-  const [selectedCandidates, setSelectedCandidates] = useState<Record<string, Candidate | null>>({});
+  const [selectedCandidates, setSelectedCandidates] = useState<
+    Record<string, Candidate | null>
+  >({});
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
+
+  const getAvatarSrc = (c: Candidate) => {
+    if (c.PhotoUrl && c.PhotoUrl.trim() !== "") return c.PhotoUrl;
+    if (c.Gender && c.Gender.toLowerCase() === "female") return femaleAvatar;
+    return maleAvatar;
+  };
 
   // ✅ Fetch candidates
   useEffect(() => {
@@ -29,19 +41,26 @@ const Vote = () => {
           return;
         }
 
-        const response = await fetch(`${import.meta.env.VITE_API_URL}/candidates`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const response = await fetch(
+          `${import.meta.env.VITE_API_URL}/candidates`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+          }
+        );
 
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Failed to fetch candidates");
+        if (!response.ok)
+          throw new Error(data.error || "Failed to fetch candidates");
 
-        // ✅ Group by position
-        const grouped = data.reduce((acc: Record<string, Candidate[]>, c: Candidate) => {
-          if (!acc[c.Position]) acc[c.Position] = [];
-          acc[c.Position].push(c);
-          return acc;
-        }, {});
+        // Group by position
+        const grouped = data.reduce(
+          (acc: Record<string, Candidate[]>, c: Candidate) => {
+            if (!acc[c.Position]) acc[c.Position] = [];
+            acc[c.Position].push(c);
+            return acc;
+          },
+          {}
+        );
 
         setCandidates(grouped);
       } catch (error: any) {
@@ -65,15 +84,21 @@ const Vote = () => {
 
   // ✅ Handle vote submission
   const handleSubmit = async () => {
-    const votes = Object.entries(selectedCandidates).map(([position, candidate]) => ({
-      position,
-      candidateId: candidate?.Id,
-    }));
+    const positionsToVote = Object.keys(candidates);
 
-    if (votes.length === 0 || votes.some((v) => !v.candidateId)) {
-      toast.error("Please select a candidate for each position before submitting.");
+    // Make sure user selected exactly one candidate for each position
+    const missing = positionsToVote.filter((pos) => !selectedCandidates[pos]);
+    if (missing.length > 0) {
+      toast.error(
+        "Please select a candidate for each position before submitting."
+      );
       return;
     }
+
+    const votes = positionsToVote.map((position) => ({
+      position,
+      candidateId: selectedCandidates[position]?.Id,
+    }));
 
     try {
       const token = localStorage.getItem("token");
@@ -83,20 +108,19 @@ const Vote = () => {
         return;
       }
 
-      const payload = { votes };
-
       const response = await fetch(`${import.meta.env.VITE_API_URL}/votes`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ votes }),
       });
 
       const data = await response.json();
 
-      if (!response.ok) throw new Error(data.error || "Failed to submit votes");
+      if (!response.ok)
+        throw new Error(data.error || "Failed to submit votes");
 
       toast.success("✅ Your votes have been submitted successfully!");
       navigate("/results");
@@ -117,21 +141,26 @@ const Vote = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-secondary/5 p-6">
       <div className="max-w-6xl mx-auto">
-        <h1 className="text-3xl font-bold text-center mb-8">Vote for Your Candidate</h1>
+        <h1 className="text-3xl font-bold text-center mb-8">
+          Vote for Your Candidate
+        </h1>
 
         {Object.keys(candidates).length === 0 ? (
-          <p className="text-center text-muted-foreground">No candidates available yet.</p>
+          <p className="text-center text-muted-foreground">
+            No candidates available yet.
+          </p>
         ) : (
           Object.entries(candidates).map(([position, candidateList]) => (
             <Card key={position} className="mb-6">
               <CardHeader>
                 <CardTitle className="capitalize text-xl font-semibold text-primary">
-                  {position}
+                  {position.replace(/_/g, " ")}
                 </CardTitle>
               </CardHeader>
               <CardContent className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                 {candidateList.map((candidate) => {
-                  const isSelected = selectedCandidates[position]?.Id === candidate.Id;
+                  const isSelected =
+                    selectedCandidates[position]?.Id === candidate.Id;
                   return (
                     <div
                       key={candidate.Id}
@@ -143,13 +172,19 @@ const Vote = () => {
                       }`}
                     >
                       <img
-                        src={candidate.PhotoUrl || "https://via.placeholder.com/100"}
+                        src={getAvatarSrc(candidate)}
                         alt={candidate.Name}
                         className="w-20 h-20 rounded-full object-cover mb-3 border border-primary/30"
                       />
-                      <h3 className="font-semibold text-lg">{candidate.Name}</h3>
-                      <p className="text-sm text-muted-foreground mb-2">{candidate.Position}</p>
-                      <p className="text-xs text-center text-muted-foreground">{candidate.Manifesto}</p>
+                      <h3 className="font-semibold text-lg">
+                        {candidate.Name}
+                      </h3>
+                      <p className="text-sm text-muted-foreground mb-2 capitalize">
+                        {candidate.Position.replace(/_/g, " ")}
+                      </p>
+                      <p className="text-xs text-center text-muted-foreground">
+                        {candidate.Manifesto}
+                      </p>
                     </div>
                   );
                 })}

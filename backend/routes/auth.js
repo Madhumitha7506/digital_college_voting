@@ -1,75 +1,136 @@
 const express = require("express");
+const sql = require("mssql");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const sql = require("mssql");
-const router = express.Router();
 const pool = require("../config/db");
 
-// ✅ REGISTER
+const router = express.Router();
+
+/* Determine user role */
+function getRoleFromVoter(voter) {
+  if (voter.Email.toLowerCase() === "admin@demo.com") {
+    return "admin";
+  }
+  return "voter";
+}
+
+/* Sign JWT Token */
+function signToken(voter) {
+  return jwt.sign(
+    {
+      id: voter.VoterId,
+      name: voter.FullName,
+      email: voter.Email,
+      gender: voter.Gender,
+      studentId: voter.StudentId,
+      role: getRoleFromVoter(voter),
+    },
+    process.env.JWT_SECRET || "changeme",
+    { expiresIn: "12h" }
+  );
+}
+
+/* ===========================================================
+   REGISTER USER
+   Body: { name, email, password, phone, gender, student_id }
+   =========================================================== */
 router.post("/register", async (req, res) => {
-  const { full_name, student_id, email, phone, password } = req.body;
-
   try {
-    const hashed = await bcrypt.hash(password, 10);
-    const request = pool.request();
+    const { name, email, password, phone, gender, student_id } = req.body;
 
-    request.input("FullName", sql.NVarChar, full_name);
-    request.input("StudentId", sql.NVarChar, student_id);
-    request.input("Email", sql.NVarChar, email);
-    request.input("Phone", sql.NVarChar, phone);
-    request.input("PasswordHash", sql.NVarChar, hashed);
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        error: "Name, email and password are required",
+      });
+    }
 
-    await request.query(`
-      INSERT INTO Profiles (FullName, StudentId, Email, Phone, PasswordHash, IsVerified)
-      VALUES (@FullName, @StudentId, @Email, @Phone, @PasswordHash, 1)
-    `);
+    // 1. Check if email exists
+    const check = await pool
+      .request()
+      .input("Email", sql.NVarChar, email)
+      .query("SELECT TOP 1 VoterId FROM dbo.Voters WHERE Email = @Email");
 
-    res.json({ message: "Registration successful" });
+    if (check.recordset.length > 0) {
+      return res.status(400).json({ error: "Email already registered" });
+    }
+
+    // 2. Hash password
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    // 3. Insert voter
+    const result = await pool
+      .request()
+      .input("FullName", sql.NVarChar, name)
+      .input("Email", sql.NVarChar, email)
+      .input("PasswordHash", sql.NVarChar, passwordHash)
+      .input("Phone", sql.NVarChar, phone || null)
+      .input("Gender", sql.NVarChar, gender || null)
+      .input("StudentId", sql.NVarChar, student_id || null)
+      .query(`
+        INSERT INTO dbo.Voters (FullName, Email, PasswordHash, Phone, Gender, StudentId, IsVerified, CreatedAt)
+        OUTPUT INSERTED.*
+        VALUES (@FullName, @Email, @PasswordHash, @Phone, @Gender, @StudentId, 1, SYSDATETIME());
+      `);
+
+    const voter = result.recordset[0];
+
+    res.json({
+      success: true,
+      message: "Registration successful",
+      voter,
+    });
   } catch (err) {
-    console.error("❌ Registration error:", err);
-    res.status(500).json({ error: "Registration failed: " + err.message });
+    console.error("REGISTER ERROR:", err);
+    res.status(500).json({ error: "Registration failed" });
   }
 });
 
-// ✅ LOGIN
+/* ===========================================================
+   LOGIN
+   Body: { email, password }
+   =========================================================== */
 router.post("/login", async (req, res) => {
-  const { email, password } = req.body;
-
   try {
-    const request = pool.request();
-    request.input("Email", sql.NVarChar, email);
+    const { email, password } = req.body;
 
-    const result = await request.query(`SELECT * FROM Profiles WHERE Email = @Email`);
+    const result = await pool
+      .request()
+      .input("Email", sql.NVarChar, email)
+      .query(`
+        SELECT VoterId, FullName, Email, PasswordHash, Gender, StudentId, Phone
+        FROM dbo.Voters
+        WHERE Email = @Email;
+      `);
+
     if (result.recordset.length === 0) {
-      return res.status(400).json({ error: "Invalid email or password" });
+      return res.status(401).json({ error: "Invalid email or password" });
     }
 
-    const user = result.recordset[0];
-    const isMatch = await bcrypt.compare(password, user.PasswordHash);
+    const voter = result.recordset[0];
 
-    if (!isMatch) {
-      return res.status(400).json({ error: "Invalid email or password" });
+    const match = await bcrypt.compare(password, voter.PasswordHash || "");
+    if (!match) {
+      return res.status(401).json({ error: "Invalid email or password" });
     }
 
-    const token = jwt.sign(
-      { id: user.Id, email: user.Email, fullName: user.FullName },
-      process.env.JWT_SECRET || "secretkey",
-      { expiresIn: "1h" }
-    );
+    const token = signToken(voter);
 
     res.json({
-      message: "Login successful",
+      success: true,
       token,
       user: {
-        id: user.Id,
-        fullName: user.FullName,
-        email: user.Email,
-        studentId: user.StudentId,
+        id: voter.VoterId,
+        fullName: voter.FullName,
+        email: voter.Email,
+        gender: voter.Gender,
+        studentId: voter.StudentId,
+        phone: voter.Phone,
+        role: getRoleFromVoter(voter),
       },
     });
   } catch (err) {
-    console.error("❌ Login error:", err);
-    res.status(500).json({ error: "Login failed: " + err.message });
+    console.error("LOGIN ERROR:", err);
+    res.status(500).json({ error: "Login failed" });
   }
 });
 

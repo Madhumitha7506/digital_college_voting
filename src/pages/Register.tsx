@@ -1,176 +1,151 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { Vote, UserPlus } from "lucide-react";
-import { z } from "zod";
 
-const registerSchema = z.object({
-  fullName: z.string().min(2, "Name must be at least 2 characters").max(100),
-  studentId: z.string().min(3, "Student ID is required").max(50),
-  email: z.string().email("Invalid email address").max(255),
-  phone: z.string().min(10, "Phone must be at least 10 digits").max(20),
-  password: z.string().min(6, "Password must be at least 6 characters").max(100),
-  confirmPassword: z.string()
-}).refine((data) => data.password === data.confirmPassword, {
-  message: "Passwords don't match",
-  path: ["confirmPassword"],
-});
-
-const Register = () => {
+export default function Register() {
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
-    fullName: "",
-    studentId: "",
+    full_name: "",
+    student_id: "",
     email: "",
     phone: "",
+    gender: "male",
     password: "",
-    confirmPassword: "",
   });
+  const [loading, setLoading] = useState(false);
+
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
+  ) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLoading(true);
 
     try {
-      registerSchema.parse(formData);
-      setLoading(true);
+      // Map frontend fields → backend expected fields
+      const payload = {
+        name: formData.full_name,
+        email: formData.email,
+        password: formData.password,
+        phone: formData.phone,
+        gender: formData.gender,
+        student_id: formData.student_id,
+      };
 
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/auth/register`, {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          full_name: formData.fullName,
-          student_id: formData.studentId,
-          email: formData.email,
-          phone: formData.phone,
-          password: formData.password,
-        }),
+        body: JSON.stringify(payload),
       });
 
-      const data = await response.json();
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Registration failed");
 
-      if (!response.ok) throw new Error(data.error || "Registration failed");
+      // 🔹 Save values for Dashboard greeting
+      localStorage.setItem("registered_name", formData.full_name);
+      localStorage.setItem("registered_student_id", formData.student_id);
+      localStorage.setItem("registered_email", formData.email);
 
-      toast.success("Registration successful! You can now log in.");
+      toast.success("✅ Registration successful! You can now log in.");
       navigate("/login");
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        toast.error(error.errors[0].message);
-      } else {
-        toast.error(error.message || "Registration failed");
-      }
+    } catch (err: any) {
+      toast.error(err.message || "Registration failed");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/5 via-background to-secondary/5 p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <div className="mx-auto mb-4 w-12 h-12 bg-primary rounded-full flex items-center justify-center">
-            <Vote className="w-6 h-6 text-primary-foreground" />
-          </div>
-          <CardTitle className="text-2xl">Create Account</CardTitle>
-          <CardDescription>Register to participate in the election</CardDescription>
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-blue-100 p-4">
+      <Card className="max-w-md w-full shadow-xl p-6">
+        <CardHeader>
+          <CardTitle className="text-2xl font-bold text-center text-primary">
+            Student Registration 🗳️
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="fullName">Full Name</Label>
-              <Input
-                id="fullName"
-                value={formData.fullName}
-                onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
-                required
-                disabled={loading}
-              />
+            <Input
+              placeholder="Full Name"
+              name="full_name"
+              value={formData.full_name}
+              onChange={handleChange}
+              required
+            />
+            <Input
+              placeholder="Student ID"
+              name="student_id"
+              value={formData.student_id}
+              onChange={handleChange}
+              required
+            />
+            <Input
+              placeholder="Email"
+              type="email"
+              name="email"
+              value={formData.email}
+              onChange={handleChange}
+              required
+            />
+            <Input
+              placeholder="Phone Number"
+              name="phone"
+              value={formData.phone}
+              onChange={handleChange}
+              required
+            />
+
+            {/* Gender Selector */}
+            <div>
+              <label className="text-sm font-medium text-gray-600 block mb-1">
+                Gender
+              </label>
+              <select
+                name="gender"
+                value={formData.gender}
+                onChange={handleChange}
+                className="w-full border rounded-md p-2"
+              >
+                <option value="male">Male 👨</option>
+                <option value="female">Female 👩</option>
+              </select>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="studentId">Student ID</Label>
-              <Input
-                id="studentId"
-                value={formData.studentId}
-                onChange={(e) => setFormData({ ...formData, studentId: e.target.value })}
-                required
-                disabled={loading}
-              />
-            </div>
+            <Input
+              placeholder="Password"
+              type="password"
+              name="password"
+              value={formData.password}
+              onChange={handleChange}
+              required
+            />
 
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                required
-                disabled={loading}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="phone">Phone Number</Label>
-              <Input
-                id="phone"
-                type="tel"
-                value={formData.phone}
-                onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                required
-                disabled={loading}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                value={formData.password}
-                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                required
-                disabled={loading}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="confirmPassword">Confirm Password</Label>
-              <Input
-                id="confirmPassword"
-                type="password"
-                value={formData.confirmPassword}
-                onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
-                required
-                disabled={loading}
-              />
-            </div>
-
-            <Button type="submit" className="w-full" disabled={loading}>
-              <UserPlus className="w-4 h-4 mr-2" />
+            <Button
+              type="submit"
+              className="w-full bg-primary text-white mt-2"
+              disabled={loading}
+            >
               {loading ? "Registering..." : "Register"}
             </Button>
 
-            <p className="text-center text-sm text-muted-foreground">
+            <p className="text-center text-sm text-muted-foreground mt-2">
               Already have an account?{" "}
-              <Button
-                type="button"
-                variant="link"
-                className="p-0 h-auto font-semibold"
+              <span
                 onClick={() => navigate("/login")}
+                className="text-primary hover:underline cursor-pointer"
               >
                 Login here
-              </Button>
+              </span>
             </p>
           </form>
         </CardContent>
       </Card>
     </div>
   );
-};
-
-export default Register;
+}

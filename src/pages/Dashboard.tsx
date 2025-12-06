@@ -1,68 +1,137 @@
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Home,
+  Users,
+  BarChart,
+  Settings,
+  LogOut,
+  MessageSquare,
+  CheckSquare, // 👈 NEW icon for Vote
+} from "lucide-react";
+import DashboardHome from "./DashboardHome";
+import Candidates from "./Candidates";
+import Results from "./Results";
+import Feedback from "./Feedback";
+import SettingsPage from "./Settings";
+import VotePage from "./Vote"; // 👈 NEW import
 import { toast } from "sonner";
-import { LogOut, User, Vote } from "lucide-react";
-
-interface User {
-  id: number;
-  fullName: string;
-  email: string;
-  studentId: string;
-}
 
 const Dashboard = () => {
+  const [activeTab, setActiveTab] = useState("home");
   const navigate = useNavigate();
-  const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
-    const storedUser = localStorage.getItem("user");
     const token = localStorage.getItem("token");
-
-    if (!storedUser || !token) {
-      navigate("/login");
-      return;
-    }
-
-    setUser(JSON.parse(storedUser));
+    if (!token) navigate("/login");
   }, [navigate]);
 
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
-    toast.success("Logged out successfully");
-    navigate("/login");
+    toast.success("Logged out successfully!");
+    navigate("/"); // Back to main landing page
+  };
+
+  const renderContent = () => {
+    switch (activeTab) {
+      case "home":
+        return <DashboardHome />;
+      case "candidates":
+        return <Candidates />;
+      case "vote":                          // 👈 NEW
+        return <VotePage />;                // 👈 NEW
+      case "results":
+        return <Results />;
+      case "feedback":
+        return <Feedback />;
+      case "settings":
+        return <SettingsPage />;
+      default:
+        return <DashboardHome />;
+    }
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-primary/5 via-background to-secondary/5 p-4">
-      <Card className="w-full max-w-lg">
-        <CardHeader className="flex justify-between items-center">
-          <CardTitle className="text-xl">Dashboard</CardTitle>
-          <Button variant="destructive" onClick={handleLogout}>
-            <LogOut className="w-4 h-4 mr-2" /> Logout
-          </Button>
-        </CardHeader>
-        <CardContent className="space-y-4 text-center">
-          <div className="flex flex-col items-center space-y-2">
-            <User className="w-10 h-10 text-primary" />
-            <h2 className="text-lg font-semibold">
-              Welcome, {user?.fullName || "Student"}
-            </h2>
-            <p className="text-sm text-muted-foreground">{user?.email}</p>
-            <p className="text-sm text-muted-foreground">ID: {user?.studentId}</p>
-          </div>
+    <div className="min-h-screen flex bg-gray-50">
+      {/* Sidebar */}
+      <div className="w-60 bg-blue-50 border-r border-blue-100 p-5 flex flex-col gap-3">
+        <SidebarItem
+          icon={<Home size={18} />}
+          text="Home"
+          active={activeTab === "home"}
+          onClick={() => setActiveTab("home")}
+        />
+        <SidebarItem
+          icon={<Users size={18} />}
+          text="Candidates"
+          active={activeTab === "candidates"}
+          onClick={() => setActiveTab("candidates")}
+        />
+        {/* 👇 NEW Vote item */}
+        <SidebarItem
+          icon={<CheckSquare size={18} />}
+          text="Vote"
+          active={activeTab === "vote"}
+          onClick={() => setActiveTab("vote")}
+        />
+        <SidebarItem
+          icon={<BarChart size={18} />}
+          text="Results"
+          active={activeTab === "results"}
+          onClick={() => setActiveTab("results")}
+        />
+        <SidebarItem
+          icon={<MessageSquare size={18} />}
+          text="Feedback"
+          active={activeTab === "feedback"}
+          onClick={() => setActiveTab("feedback")}
+        />
+        <SidebarItem
+          icon={<Settings size={18} />}
+          text="Settings"
+          active={activeTab === "settings"}
+          onClick={() => setActiveTab("settings")}
+        />
+        <div className="mt-auto">
+          <SidebarItem
+            icon={<LogOut size={18} />}
+            text="Logout"
+            onClick={handleLogout}
+          />
+        </div>
+      </div>
 
-          <div className="flex justify-center mt-6">
-            <Button onClick={() => navigate("/vote")}>
-              <Vote className="w-4 h-4 mr-2" /> Go to Voting Page
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Main content */}
+      <div className="flex-1 p-6 overflow-auto">{renderContent()}</div>
     </div>
   );
 };
+
+function SidebarItem({
+  icon,
+  text,
+  active,
+  onClick,
+}: {
+  icon: any;
+  text: string;
+  active?: boolean;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-3 w-full px-3 py-2 rounded-md text-left transition-all duration-150 ${
+        active
+          ? "bg-blue-600 text-white shadow-sm"
+          : "text-blue-700 hover:bg-blue-100"
+      }`}
+    >
+      {icon}
+      <span className="font-medium">{text}</span>
+    </button>
+  );
+}
 
 export default Dashboard;

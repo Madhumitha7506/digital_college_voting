@@ -1,91 +1,95 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import feedbackBanner from "@/assets/feedback1.png";
 import { toast } from "sonner";
 
 const Feedback = () => {
-  const navigate = useNavigate();
-  const [loading, setLoading] = useState(false);
-  const [rating, setRating] = useState<number | null>(null);
-  const [suggestion, setSuggestion] = useState("");
+  const [form, setForm] = useState({
+    q1: 0,
+    q2: 0,
+    q3: 0,
+    q4: 0,
+    q5: "",
+  });
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!rating) {
-      toast.error("Please select a rating before submitting.");
-      return;
-    }
-
+  const handleSubmit = async () => {
     try {
-      setLoading(true);
-
       const token = localStorage.getItem("token");
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/feedback`, {
+      const payload = {
+        rating: Math.round((form.q1 + form.q2 + form.q3 + form.q4) / 4),
+        suggestions: form.q5,
+      };
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/feedback`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ rating, suggestion }),
+        body: JSON.stringify(payload),
       });
-
-      const data = await response.json();
-
-      if (!response.ok) throw new Error(data.error || "Failed to submit feedback");
-
-      toast.success("Thank you for your feedback!");
-      navigate("/dashboard");
-    } catch (err: any) {
-      toast.error(err.message || "Feedback submission failed");
-    } finally {
-      setLoading(false);
+      if (!res.ok) throw new Error("Failed to send feedback");
+      toast.success("Thanks for your feedback!");
+      setForm({ q1: 0, q2: 0, q3: 0, q4: 0, q5: "" });
+    } catch (error: any) {
+      toast.error(error.message);
     }
   };
 
+  const questions = [
+    "How satisfied are you with the candidates' positions on key issues?",
+    "Which issue is most important to you in this election?",
+    "How much do you trust the integrity of the election process?",
+    "Are you a registered voter?",
+  ];
+
+  const renderStars = (key: keyof typeof form) =>
+    [1, 2, 3, 4, 5].map((val) => (
+      <span
+        key={val}
+        onClick={() => setForm({ ...form, [key]: val })}
+        className={`cursor-pointer text-2xl ${
+          (form as any)[key] >= val ? "text-yellow-400" : "text-gray-300"
+        }`}
+      >
+        ★
+      </span>
+    ));
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/5 via-background to-secondary/5 p-4">
-      <Card className="w-full max-w-lg">
-        <CardHeader className="text-center">
-          <CardTitle className="text-2xl">Share Your Feedback</CardTitle>
+    <div className="space-y-6">
+      <img
+        src={feedbackBanner}
+        alt="Feedback Banner"
+        className="w-full h-64 object-cover rounded-xl shadow-md"
+      />
+
+      <Card className="shadow-md">
+        <CardHeader>
+          <CardTitle className="text-blue-700 font-bold text-lg">
+            Help us improve the next election!
+          </CardTitle>
         </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2 text-center">
-              <Label className="text-lg">How was your voting experience?</Label>
-              <div className="flex justify-center space-x-3 mt-2">
-                {[1, 2, 3, 4, 5].map((num) => (
-                  <Button
-                    key={num}
-                    type="button"
-                    variant={rating === num ? "default" : "outline"}
-                    onClick={() => setRating(num)}
-                    className="rounded-full w-10 h-10"
-                  >
-                    {num}
-                  </Button>
-                ))}
-              </div>
+        <CardContent className="space-y-4">
+          {questions.map((q, i) => (
+            <div key={i}>
+              <p className="font-medium text-gray-700 mb-1">{q}</p>
+              <div>{renderStars(`q${i + 1}` as keyof typeof form)}</div>
             </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="suggestion">Suggestions (optional)</Label>
-              <Textarea
-                id="suggestion"
-                placeholder="What could we improve?"
-                value={suggestion}
-                onChange={(e) => setSuggestion(e.target.value)}
-                rows={4}
-              />
-            </div>
-
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Submitting..." : "Submit Feedback"}
-            </Button>
-          </form>
+          ))}
+          <div>
+            <p className="font-medium text-gray-700 mb-1">
+              What recommendations do you have to improve voter participation or the election process?
+            </p>
+            <textarea
+              className="w-full border border-gray-300 rounded-md p-2 h-24 focus:ring-2 focus:ring-blue-400"
+              value={form.q5}
+              onChange={(e) => setForm({ ...form, q5: e.target.value })}
+            />
+          </div>
+          <Button onClick={handleSubmit} className="mt-4">
+            Submit Feedback
+          </Button>
         </CardContent>
       </Card>
     </div>

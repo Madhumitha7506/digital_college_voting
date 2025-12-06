@@ -13,6 +13,7 @@ import Results from "./pages/Results";
 import Feedback from "./pages/Feedback";
 import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
+import Notifications from "./components/notifications"; // ✅ import notifications
 
 const queryClient = new QueryClient();
 
@@ -25,6 +26,9 @@ const App = () => {
         <Sonner />
 
         <Router>
+          {/* ✅ Global real-time notifications listener */}
+          <Notifications />
+
           <Routes>
             {/* Public Routes */}
             <Route path="/" element={<Index />} />

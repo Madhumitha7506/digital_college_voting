@@ -1,106 +1,101 @@
+// src/pages/Login.tsx (or your Login component path)
+
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
-import { LogIn } from "lucide-react";
-import { z } from "zod";
-
-const loginSchema = z.object({
-  email: z.string().email("Invalid email address"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
-});
 
 const Login = () => {
   const navigate = useNavigate();
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState({ email: "", password: "" });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLoading(true);
 
     try {
-      loginSchema.parse(formData);
-      setLoading(true);
-
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/auth/login`, {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/auth/login`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email,
+          password,
+        }),
       });
 
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Login failed");
+      const data = await res.json();
 
-      toast.success("Login successful!");
+      if (!res.ok) {
+        const msg = data.error || data.message || "Login failed";
+        toast.error(msg);
+        setLoading(false);
+        return;
+      }
+
+      if (!data.token || !data.user) {
+        toast.error("Invalid response from server");
+        setLoading(false);
+        return;
+      }
+
+      // Save to localStorage (used in candidates.tsx)
       localStorage.setItem("token", data.token);
       localStorage.setItem("user", JSON.stringify(data.user));
 
+      toast.success("Login successful!");
+      setLoading(false);
+
+      // go to dashboard or wherever you want
       navigate("/dashboard");
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        toast.error(error.errors[0].message);
-      } else {
-        toast.error(error.message || "Login failed");
-      }
-    } finally {
+    } catch (err: any) {
+      console.error("Login error:", err);
+      toast.error("Unable to connect to server");
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/5 via-background to-secondary/5 p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <div className="mx-auto mb-4 w-12 h-12 bg-primary rounded-full flex items-center justify-center">
-            <LogIn className="w-6 h-6 text-primary-foreground" />
-          </div>
-          <CardTitle className="text-2xl">Welcome Back</CardTitle>
-          <CardDescription>Login to access your account</CardDescription>
+    <div className="min-h-screen flex items-center justify-center bg-slate-100">
+      <Card className="w-full max-w-md shadow-md">
+        <CardHeader>
+          <CardTitle className="text-center text-xl font-bold">
+            Digital Voting System - Login
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+            <div>
+              <label className="block text-sm mb-1">Email</label>
               <Input
-                id="email"
                 type="email"
-                value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                placeholder="admin@demo.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 required
-                disabled={loading}
               />
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+            <div>
+              <label className="block text-sm mb-1">Password</label>
               <Input
-                id="password"
                 type="password"
-                value={formData.password}
-                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                placeholder="admin123"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
                 required
-                disabled={loading}
               />
             </div>
 
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Logging in..." : "Login"}
             </Button>
-
-            <p className="text-center text-sm text-muted-foreground">
-              Don’t have an account?{" "}
-              <Button
-                type="button"
-                variant="link"
-                className="p-0 h-auto font-semibold"
-                onClick={() => navigate("/register")}
-              >
-                Register here
-              </Button>
-            </p>
           </form>
         </CardContent>
       </Card>

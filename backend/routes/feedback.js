@@ -1,27 +1,49 @@
 const express = require("express");
 const sql = require("mssql");
-const { authenticateToken } = require("../middleware/auth");
 const pool = require("../config/db");
+const { authenticateToken } = require("../middleware/auth");
+
 const router = express.Router();
 
+/* ===========================================================
+   ADD Feedback
+   Calls: sp_AddFeedback
+   =========================================================== */
 router.post("/", authenticateToken, async (req, res) => {
-  const { rating, suggestion } = req.body;
-  const userId = req.user.id;
-
   try {
-    await pool.request()
-      .input("userId", sql.Int, userId)
-      .input("rating", sql.Int, rating)
-      .input("suggestion", sql.NVarChar, suggestion || null)
-      .query(`
-        INSERT INTO Feedback (UserId, Rating, Suggestion, CreatedAt)
-        VALUES (@userId, @rating, @suggestion, GETDATE())
-      `);
+    const { Message, Rating } = req.body;
+    const userId = req.user.id;
 
-    res.json({ message: "Feedback submitted successfully" });
+    const request = pool.request();
+    request.input("VoterId", sql.Int, userId);
+    request.input("Message", sql.NVarChar, Message);
+    request.input("Rating", sql.Int, Rating || null);
+    request.output("FeedbackId", sql.Int);
+
+    const result = await request.execute("sp_AddFeedback");
+    res.json({
+      success: true,
+      FeedbackId: result.output.FeedbackId,
+      message: "Feedback submitted successfully",
+    });
   } catch (err) {
-    console.error("❌ Feedback error:", err);
+    console.error("❌ Error adding feedback:", err);
     res.status(500).json({ error: "Failed to submit feedback" });
+  }
+});
+
+/* ===========================================================
+   GET Feedback
+   Calls: sp_GetFeedback
+   =========================================================== */
+router.get("/", authenticateToken, async (req, res) => {
+  try {
+    const request = pool.request();
+    const result = await request.execute("sp_GetFeedback");
+    res.json(result.recordset);
+  } catch (err) {
+    console.error("❌ Error fetching feedback:", err);
+    res.status(500).json({ error: "Failed to fetch feedback" });
   }
 });
 
