@@ -1,29 +1,52 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Home,
+  Home as HomeIcon,
   Users,
   BarChart,
   Settings,
   LogOut,
   MessageSquare,
-  CheckSquare, // 👈 NEW icon for Vote
+  ShieldCheck,
 } from "lucide-react";
 import DashboardHome from "./DashboardHome";
 import Candidates from "./Candidates";
 import Results from "./Results";
 import Feedback from "./Feedback";
 import SettingsPage from "./Settings";
-import VotePage from "./Vote"; // 👈 NEW import
 import { toast } from "sonner";
+
+interface StoredUser {
+  fullName?: string;
+  studentId?: string;
+  email?: string;
+  gender?: string;
+  role?: string; // "admin" | "voter"
+}
 
 const Dashboard = () => {
   const [activeTab, setActiveTab] = useState("home");
+  const [user, setUser] = useState<StoredUser | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
     const token = localStorage.getItem("token");
-    if (!token) navigate("/login");
+    const userStr = localStorage.getItem("user");
+
+    if (!token) {
+      navigate("/login");
+      return;
+    }
+
+    if (userStr) {
+      try {
+        const parsed = JSON.parse(userStr);
+        setUser(parsed);
+      } catch {
+        // ignore parse error, but keep dashboard working
+        setUser(null);
+      }
+    }
   }, [navigate]);
 
   const handleLogout = () => {
@@ -39,8 +62,6 @@ const Dashboard = () => {
         return <DashboardHome />;
       case "candidates":
         return <Candidates />;
-      case "vote":                          // 👈 NEW
-        return <VotePage />;                // 👈 NEW
       case "results":
         return <Results />;
       case "feedback":
@@ -57,7 +78,7 @@ const Dashboard = () => {
       {/* Sidebar */}
       <div className="w-60 bg-blue-50 border-r border-blue-100 p-5 flex flex-col gap-3">
         <SidebarItem
-          icon={<Home size={18} />}
+          icon={<HomeIcon size={18} />}
           text="Home"
           active={activeTab === "home"}
           onClick={() => setActiveTab("home")}
@@ -67,13 +88,6 @@ const Dashboard = () => {
           text="Candidates"
           active={activeTab === "candidates"}
           onClick={() => setActiveTab("candidates")}
-        />
-        {/* 👇 NEW Vote item */}
-        <SidebarItem
-          icon={<CheckSquare size={18} />}
-          text="Vote"
-          active={activeTab === "vote"}
-          onClick={() => setActiveTab("vote")}
         />
         <SidebarItem
           icon={<BarChart size={18} />}
@@ -93,6 +107,16 @@ const Dashboard = () => {
           active={activeTab === "settings"}
           onClick={() => setActiveTab("settings")}
         />
+
+        {/* 🔐 Only show this for admin users */}
+        {user?.role === "admin" && (
+          <SidebarItem
+            icon={<ShieldCheck size={18} />}
+            text="Admin Panel"
+            onClick={() => navigate("/admin")}
+          />
+        )}
+
         <div className="mt-auto">
           <SidebarItem
             icon={<LogOut size={18} />}

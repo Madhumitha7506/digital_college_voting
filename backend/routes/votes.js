@@ -1,5 +1,4 @@
 // backend/routes/votes.js
-
 const express = require("express");
 const sql = require("mssql");
 const pool = require("../config/db");
@@ -8,49 +7,55 @@ const { authenticateToken } = require("../middleware/auth");
 const router = express.Router();
 
 /* ===========================================================
-   CAST votes (one per position)
-   Expects: { votes: [{ position, candidateId }, ...] }
-   Calls sp_CastVote for each
+   CAST a vote
+   Calls: sp_CastVote
+   Emits: "vote_cast" via socket.io
    =========================================================== */
 router.post("/", authenticateToken, async (req, res) => {
   try {
-    const { votes } = req.body;
+    const { CandidateId } = req.body;
     const userId = req.user.id;
 
-    if (!Array.isArray(votes) || votes.length === 0) {
-      return res.status(400).json({ error: "No votes provided" });
-    }
+    const request = pool.request();
+    request.input("VoterId", sql.Int, userId);
+    request.input("CandidateId", sql.Int, CandidateId);
+    request.output("VoteId", sql.Int);
 
-    const savedVotes = [];
+    const result = await request.execute("sp_CastVote");
 
-    for (const v of votes) {
-      if (!v || !v.candidateId) {
-        continue;
-      }
+    // 🔔 Fetch candidate info for notification
+    const candRes = await pool
+      .request()
+      .input("CandidateId", sql.Int, CandidateId)
+      .query(
+        `SELECT CandidateId, Name, Position, Gender
+         FROM dbo.Candidates
+         WHERE CandidateId = @CandidateId`
+      );
 
-      const request = pool.request();
-      request.input("VoterId", sql.Int, userId);
-      request.input("CandidateId", sql.Int, v.candidateId);
-      request.output("VoteId", sql.Int);
+    const candidate = candRes.recordset[0];
 
-      const result = await request.execute("sp_CastVote");
-
-      savedVotes.push({
-        position: v.position,
-        candidateId: v.candidateId,
-        voteId: result.output.VoteId,
+    // 🔔 Emit socket event so admin sees live notification
+    const io = req.app.get("io");
+    if (io && candidate) {
+      io.emit("vote_cast", {
+        candidateId: candidate.CandidateId,
+        candidateName: candidate.Name,
+        position: candidate.Position,
+        gender: candidate.Gender,
+        voterId: userId,
+        time: new Date().toISOString(),
       });
     }
 
     res.json({
       success: true,
-      message: "Votes recorded successfully",
-      votes: savedVotes,
+      VoteId: result.output.VoteId,
+      message: "Vote recorded successfully",
     });
   } catch (err) {
-    console.error("❌ Error casting votes:", err);
-    // If sp_CastVote RAISERRORs, the message comes in err.message
-    res.status(400).json({ error: err.message || "Failed to cast votes" });
+    console.error("❌ Error casting vote:", err);
+    res.status(500).json({ error: err.message || "Failed to cast vote" });
   }
 });
 

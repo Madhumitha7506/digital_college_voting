@@ -8,6 +8,7 @@ const router = express.Router();
 
 /* Determine user role */
 function getRoleFromVoter(voter) {
+  // Simple rule: this email is treated as admin
   if (voter.Email.toLowerCase() === "admin@demo.com") {
     return "admin";
   }
@@ -26,7 +27,11 @@ function signToken(voter) {
       role: getRoleFromVoter(voter),
     },
     process.env.JWT_SECRET || "changeme",
-    { expiresIn: "12h" }
+    {
+      // ⏱️ token validity: 7 days (good for demo / project work)
+      // You can change this to "12h" or "1d" later if needed.
+      expiresIn: "60d",
+    }
   );
 }
 
@@ -113,6 +118,7 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
+    // 🔑 issue JWT (valid for 7 days now)
     const token = signToken(voter);
 
     res.json({

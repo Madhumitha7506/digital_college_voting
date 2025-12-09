@@ -15,6 +15,7 @@ const voteRoutes = require("./routes/votes");
 const feedbackRoutes = require("./routes/feedback");
 const adminRoutes = require("./routes/admin");
 const notificationRoutes = require("./routes/notifications");
+const settingsRoutes = require("./routes/settings");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -61,6 +62,9 @@ app.use("/api/votes", voteRoutes);
 app.use("/api/feedback", feedbackRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/settings", settingsRoutes);
+
+
 
 // ✅ Health check
 app.get("/api/health", (req, res) => {

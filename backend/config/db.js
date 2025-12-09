@@ -1,21 +1,18 @@
+// backend/config/db.js
 const sql = require("mssql");
-const path = require("path");
-
-// ✅ Load environment variables from the project root (.env)
-require("dotenv").config({ path: path.resolve(__dirname, "../../.env") });
-
-// Optional: check that variables are loaded
-console.log("ENV CHECK:", process.env.DB_SERVER, process.env.DB_DATABASE);
 
 const config = {
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  server: process.env.DB_SERVER, // e.g. "10.0.0.99"
-  database: process.env.DB_DATABASE, // e.g. "DigitalVotingDB"
-  port: parseInt(process.env.DB_PORT, 10) || 1433,
+  // Use the same server name you see in SSMS: here it's 10.0.0.99
+  server: process.env.DB_SERVER || "10.0.0.99",
+
+  // DO NOT force a port here; let the driver / SQL Browser resolve it
+  user: process.env.DB_USER || "voting_user",
+  password: process.env.DB_PASSWORD || "StrongPassword123!",
+  database: process.env.DB_NAME || "DigitalVotingDB",
+
   options: {
-    encrypt: process.env.DB_ENCRYPT === "true", // true for Azure
-    trustServerCertificate: process.env.DB_TRUST_SERVER_CERTIFICATE === "true",
+    encrypt: false,              // fine for local / dev
+    trustServerCertificate: true,
   },
   pool: {
     max: 10,
@@ -24,25 +21,17 @@ const config = {
   },
 };
 
+console.log("ENV CHECK:", config.server, config.database);
+
 const pool = new sql.ConnectionPool(config);
 
-// Connect immediately when this module is imported
-pool.connect()
+pool
+  .connect()
   .then(() => {
-    console.log(`✅ Connected to SQL Server: ${process.env.DB_DATABASE}`);
+    console.log("✅ SQL Server connected");
   })
   .catch((err) => {
     console.error("❌ SQL Server connection failed:", err.message);
   });
-
-// Optional quick test query to verify connectivity
-pool.on("connect", async () => {
-  try {
-    const result = await pool.request().query("SELECT 1 AS ok");
-    console.log("🔗 Test Query Result:", result.recordset);
-  } catch (error) {
-    console.error("⚠️ Test query failed:", error.message);
-  }
-});
 
 module.exports = pool;
