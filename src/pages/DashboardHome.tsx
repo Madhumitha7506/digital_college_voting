@@ -5,20 +5,34 @@ import femaleAvatar from "@/assets/female.png";
 import everyVoteBanner from "@/assets/everyvote.png";
 import { Card } from "@/components/ui/card";
 
+interface User {
+  fullName?: string;
+  email?: string;
+  gender?: string;
+  studentId?: string;
+  role?: "admin" | "voter";
+}
+
 const DashboardHome = () => {
   const [daysLeft, setDaysLeft] = useState<number | null>(null);
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [electionDate, setElectionDate] = useState<string | null>(null);
 
   const apiBase = import.meta.env.VITE_API_URL;
 
-  /* Load user from localStorage */
+  // Load user from localStorage
   useEffect(() => {
     const userData = localStorage.getItem("user");
-    if (userData) setUser(JSON.parse(userData));
+    if (userData) {
+      try {
+        setUser(JSON.parse(userData));
+      } catch {
+        setUser(null);
+      }
+    }
   }, []);
 
-  /* Load election date from backend (then cache in localStorage) */
+  // Load election date from backend (then cache in localStorage)
   useEffect(() => {
     const fetchElectionDate = async () => {
       const token = localStorage.getItem("token");
@@ -54,7 +68,7 @@ const DashboardHome = () => {
     fetchElectionDate();
   }, [apiBase]);
 
-  /* Compute daysLeft whenever electionDate changes */
+  // Compute daysLeft whenever electionDate changes
   useEffect(() => {
     if (!electionDate) {
       setDaysLeft(null);
@@ -118,14 +132,12 @@ const DashboardHome = () => {
         </p>
       </Card>
 
-      {/* (For admin you also have the live vote notifications card below this,
-          which you already wired up earlier.) */}
-
-      <div className="w-full max-w-5xl">
+      {/* MAIN BANNER IMAGE */}
+      <div className="w-full max-w-6xl px-4">
         <img
           src={everyVoteBanner}
           alt="Every Vote Counts"
-          className="rounded-2xl shadow-md w-full h-[480px] object-cover"
+          className="rounded-3xl shadow-lg w-full max-h-[650px] object-cover"
         />
       </div>
     </div>

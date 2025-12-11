@@ -1,50 +1,48 @@
-import { useState, useEffect } from "react";
+// src/pages/Dashboard.tsx
+import { useState, useEffect, ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Home as HomeIcon,
+  Home,
   Users,
   BarChart,
   Settings,
   LogOut,
   MessageSquare,
-  ShieldCheck,
+  ClipboardList,
+  Shield,
 } from "lucide-react";
+
 import DashboardHome from "./DashboardHome";
 import Candidates from "./Candidates";
 import Results from "./Results";
 import Feedback from "./Feedback";
 import SettingsPage from "./Settings";
+import Vote from "./Vote";
+import Admin from "./Admin";
 import { toast } from "sonner";
 
-interface StoredUser {
-  fullName?: string;
-  studentId?: string;
-  email?: string;
-  gender?: string;
-  role?: string; // "admin" | "voter"
-}
+type Role = "admin" | "voter";
 
 const Dashboard = () => {
-  const [activeTab, setActiveTab] = useState("home");
-  const [user, setUser] = useState<StoredUser | null>(null);
+  const [activeTab, setActiveTab] = useState<string>("home");
+  const [role, setRole] = useState<Role>("voter");
   const navigate = useNavigate();
 
   useEffect(() => {
     const token = localStorage.getItem("token");
-    const userStr = localStorage.getItem("user");
-
     if (!token) {
       navigate("/login");
       return;
     }
 
+    const userStr = localStorage.getItem("user");
     if (userStr) {
       try {
-        const parsed = JSON.parse(userStr);
-        setUser(parsed);
-      } catch {
-        // ignore parse error, but keep dashboard working
-        setUser(null);
+        const user = JSON.parse(userStr);
+        const r: Role = user.role === "admin" ? "admin" : "voter";
+        setRole(r);
+      } catch (e) {
+        console.error("Failed to parse user from localStorage", e);
       }
     }
   }, [navigate]);
@@ -64,10 +62,14 @@ const Dashboard = () => {
         return <Candidates />;
       case "results":
         return <Results />;
+      case "vote":
+        return <Vote />;
       case "feedback":
         return <Feedback />;
       case "settings":
         return <SettingsPage />;
+      case "admin":
+        return <Admin />;
       default:
         return <DashboardHome />;
     }
@@ -78,29 +80,43 @@ const Dashboard = () => {
       {/* Sidebar */}
       <div className="w-60 bg-blue-50 border-r border-blue-100 p-5 flex flex-col gap-3">
         <SidebarItem
-          icon={<HomeIcon size={18} />}
+          icon={<Home size={18} />}
           text="Home"
           active={activeTab === "home"}
           onClick={() => setActiveTab("home")}
         />
+
         <SidebarItem
           icon={<Users size={18} />}
           text="Candidates"
           active={activeTab === "candidates"}
           onClick={() => setActiveTab("candidates")}
         />
+
+        {/* VOTE: visible ONLY for normal voters */}
+        {role === "voter" && (
+          <SidebarItem
+            icon={<ClipboardList size={18} />}
+            text="Vote"
+            active={activeTab === "vote"}
+            onClick={() => setActiveTab("vote")}
+          />
+        )}
+
         <SidebarItem
           icon={<BarChart size={18} />}
           text="Results"
           active={activeTab === "results"}
           onClick={() => setActiveTab("results")}
         />
+
         <SidebarItem
           icon={<MessageSquare size={18} />}
           text="Feedback"
           active={activeTab === "feedback"}
           onClick={() => setActiveTab("feedback")}
         />
+
         <SidebarItem
           icon={<Settings size={18} />}
           text="Settings"
@@ -108,12 +124,13 @@ const Dashboard = () => {
           onClick={() => setActiveTab("settings")}
         />
 
-        {/* 🔐 Only show this for admin users */}
-        {user?.role === "admin" && (
+        {/* ADMIN PANEL: visible ONLY for admin */}
+        {role === "admin" && (
           <SidebarItem
-            icon={<ShieldCheck size={18} />}
+            icon={<Shield size={18} />}
             text="Admin Panel"
-            onClick={() => navigate("/admin")}
+            active={activeTab === "admin"}
+            onClick={() => setActiveTab("admin")}
           />
         )}
 
@@ -132,17 +149,14 @@ const Dashboard = () => {
   );
 };
 
-function SidebarItem({
-  icon,
-  text,
-  active,
-  onClick,
-}: {
-  icon: any;
+interface SidebarItemProps {
+  icon: ReactNode;
   text: string;
   active?: boolean;
   onClick?: () => void;
-}) {
+}
+
+function SidebarItem({ icon, text, active, onClick }: SidebarItemProps) {
   return (
     <button
       onClick={onClick}

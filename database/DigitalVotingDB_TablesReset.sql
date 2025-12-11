@@ -100,16 +100,23 @@ GO
 
 ---------------------------------------------------------------
 -- FEEDBACK
+-- Now includes extra fields for survey questions
 ---------------------------------------------------------------
 CREATE TABLE dbo.Feedback
 (
-    FeedbackId   INT IDENTITY(1,1)       NOT NULL PRIMARY KEY,
-    VoterId      INT                     NULL,
-    Message      NVARCHAR(1000)          NOT NULL,
-    Rating       INT                     NULL,
+    FeedbackId           INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    VoterId              INT               NULL,
+    Message              NVARCHAR(1000)    NOT NULL,
+    Rating               INT               NULL,     -- overall / main rating
 
-    CreatedAt    DATETIME2(7)            NOT NULL 
-                  CONSTRAINT DF_Feedback_CreatedAt DEFAULT (SYSDATETIME()),
+    -- New survey fields
+    IsRegisteredVoter    BIT               NULL,     -- yes/no
+    CandidateSatisfaction INT              NULL,     -- 1–5
+    ProcessTrust         INT               NULL,     -- 1–5
+    Motivation           NVARCHAR(20)      NULL,     -- 'more', 'less', 'same'
+
+    CreatedAt            DATETIME2(7)      NOT NULL 
+                          CONSTRAINT DF_Feedback_CreatedAt DEFAULT (SYSDATETIME()),
 
     CONSTRAINT FK_Feedback_Voters
         FOREIGN KEY (VoterId) REFERENCES dbo.Voters (VoterId)

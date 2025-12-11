@@ -11,7 +11,12 @@ interface ResultsStatus {
 
 interface PositionRow {
   Position: string;
-  Votes: number;
+  TotalVotes: number;
+}
+
+interface GenderRow {
+  Gender: string;
+  TotalVotes: number;
 }
 
 interface AdminStats {
@@ -20,6 +25,7 @@ interface AdminStats {
   totalVotes: number;
   turnoutPercent: number;
   votesByPosition: PositionRow[];
+  votesByGender: GenderRow[];
 }
 
 const Admin = () => {
@@ -43,10 +49,8 @@ const Admin = () => {
       const res = await fetch(`${apiBase}/admin/results-status`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to load status");
-
       setStatus(data);
     } catch (err: any) {
       console.error("Error loading results status:", err);
@@ -58,14 +62,6 @@ const Admin = () => {
 
   /* ================================
      Load stats for admin dashboard
-     backend: /api/admin/stats returns
-     {
-       totalVoters,
-       totalCandidates,
-       totalVotes,
-       turnoutPercent,
-       byPosition: [{ Position, Votes }]
-     }
      ================================ */
   const fetchStats = async () => {
     try {
@@ -77,7 +73,26 @@ const Admin = () => {
       const raw = await res.json();
       if (!res.ok) throw new Error(raw.error || "Failed to load stats");
 
-      const votesByPosition: PositionRow[] = raw.byPosition || [];
+      // Backend may return:
+      // - raw.votesByPosition
+      // - raw.byPosition
+      // - raw.positionStats
+      const rawPos =
+        raw.votesByPosition || raw.byPosition || raw.positionStats || [];
+
+      const votesByPosition: PositionRow[] = (rawPos as any[]).map((row) => ({
+        Position: row.Position,
+        // accept several possible property names from SQL
+        TotalVotes: row.TotalVotes ?? row.Votes ?? row.VoteCount ?? 0,
+      }));
+
+      const rawGender =
+        raw.votesByGender || raw.byGender || raw.genderStats || [];
+
+      const votesByGender: GenderRow[] = (rawGender as any[]).map((row) => ({
+        Gender: row.Gender,
+        TotalVotes: row.TotalVotes ?? row.Votes ?? row.VoteCount ?? 0,
+      }));
 
       const normalized: AdminStats = {
         totalVoters: raw.totalVoters ?? 0,
@@ -85,6 +100,7 @@ const Admin = () => {
         totalVotes: raw.totalVotes ?? 0,
         turnoutPercent: raw.turnoutPercent ?? 0,
         votesByPosition,
+        votesByGender,
       };
 
       setStats(normalized);
@@ -108,7 +124,6 @@ const Admin = () => {
     try {
       setPublishing(true);
       const token = localStorage.getItem("token");
-
       const res = await fetch(`${apiBase}/admin/publish-results`, {
         method: "POST",
         headers: {
@@ -116,7 +131,6 @@ const Admin = () => {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
       });
-
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to publish results");
 
@@ -134,7 +148,6 @@ const Admin = () => {
     try {
       setUnpublishing(true);
       const token = localStorage.getItem("token");
-
       const res = await fetch(`${apiBase}/admin/unpublish-results`, {
         method: "POST",
         headers: {
@@ -142,7 +155,6 @@ const Admin = () => {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
       });
-
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to unpublish results");
 
@@ -183,7 +195,9 @@ const Admin = () => {
       const a = document.createElement("a");
       a.href = url;
       a.download =
-        type === "candidates" ? "candidate_report.csv" : "turnout_report.csv";
+        type === "candidates"
+          ? "candidate_report.csv"
+          : "turnout_report.csv";
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -209,12 +223,11 @@ const Admin = () => {
     );
   }
 
-  // Safe defaults
   const positionData: PositionRow[] = stats?.votesByPosition || [];
   const maxVotes =
     positionData.length > 0
-      ? Math.max(...positionData.map((r) => r.Votes || 0), 1)
-      : 1;
+      ? Math.max(...positionData.map((r) => r.TotalVotes || 0), 1)
+      : 0;
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
@@ -240,7 +253,7 @@ const Admin = () => {
             ) : (
               <p>
                 Results are currently{" "}
-                <strong>hidden from students.</strong> They will only see the
+                <strong>hidden from students.</strong> They will only see the{" "}
                 “results not yet announced” message.
               </p>
             )}
@@ -319,35 +332,36 @@ const Admin = () => {
                 <p className="text-sm font-semibold mb-2">
                   Votes by Position (simple bar graph)
                 </p>
-                <div className="space-y-2">
-                  {positionData.length === 0 && (
-                    <p className="text-xs text-muted-foreground">
-                      No votes recorded yet.
-                    </p>
-                  )}
 
-                  {positionData.map((row) => {
-                    const width = `${Math.round(
-                      (row.Votes / maxVotes) * 100
-                    )}%`;
-                    return (
-                      <div key={row.Position}>
-                        <div className="flex justify-between text-xs mb-1">
-                          <span className="capitalize">
-                            {row.Position.replace(/_/g, " ")}
-                          </span>
-                          <span>{row.Votes} votes</span>
+                {positionData.length === 0 || maxVotes === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    No votes recorded yet.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {positionData.map((row) => {
+                      const width = `${Math.round(
+                        (row.TotalVotes / maxVotes) * 100
+                      )}%`;
+                      return (
+                        <div key={row.Position}>
+                          <div className="flex justify-between text-xs mb-1">
+                            <span className="capitalize">
+                              {row.Position.replace(/_/g, " ")}
+                            </span>
+                            <span>{row.TotalVotes} votes</span>
+                          </div>
+                          <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                            <div
+                              className="h-2 bg-blue-500"
+                              style={{ width }}
+                            ></div>
+                          </div>
                         </div>
-                        <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-                          <div
-                            className="h-2 bg-blue-500"
-                            style={{ width }}
-                          ></div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </>
           )}

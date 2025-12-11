@@ -1,4 +1,3 @@
-// backend/routes/settings.js
 const express = require("express");
 const sql = require("mssql");
 const pool = require("../config/db");
@@ -41,7 +40,18 @@ router.get("/profile", authenticateToken, async (req, res) => {
       return res.status(404).json({ error: "Voter not found" });
     }
 
-    res.json(row);
+    // Return a clean camelCase payload for the frontend
+    res.json({
+      id: row.VoterId,
+      fullName: row.FullName,
+      email: row.Email,
+      phone: row.Phone,
+      gender: row.Gender,
+      studentId: row.StudentId,
+      dateOfBirth: row.DateOfBirth
+        ? new Date(row.DateOfBirth).toISOString().slice(0, 10)
+        : null,
+    });
   } catch (err) {
     console.error("❌ Error fetching profile:", err);
     res
@@ -54,6 +64,7 @@ router.get("/profile", authenticateToken, async (req, res) => {
    PUT /api/settings/profile
    Body: { fullName, email, phone, dateOfBirth }
    - Only voters can update their profile
+   - StudentId is NOT changed here
    =========================================================== */
 router.put("/profile", authenticateToken, async (req, res) => {
   try {
@@ -87,9 +98,9 @@ router.put("/profile", authenticateToken, async (req, res) => {
     await request.query(`
       UPDATE dbo.Voters
       SET 
-        FullName = @FullName,
-        Email = @Email,
-        Phone = @Phone,
+        FullName   = @FullName,
+        Email      = @Email,
+        Phone      = @Phone,
         DateOfBirth = @DateOfBirth
       WHERE VoterId = @VoterId;
     `);

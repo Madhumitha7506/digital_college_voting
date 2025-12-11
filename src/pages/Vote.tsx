@@ -22,6 +22,7 @@ const Vote = () => {
     Record<string, Candidate | null>
   >({});
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const navigate = useNavigate();
 
   const getAvatarSrc = (c: Candidate) => {
@@ -49,8 +50,9 @@ const Vote = () => {
         );
 
         const data = await response.json();
-        if (!response.ok)
+        if (!response.ok) {
           throw new Error(data.error || "Failed to fetch candidates");
+        }
 
         // Group by position
         const grouped = data.reduce(
@@ -84,9 +86,14 @@ const Vote = () => {
 
   // ✅ Handle vote submission
   const handleSubmit = async () => {
-    const positionsToVote = Object.keys(candidates);
+    if (submitting) return;
 
-    // Make sure user selected exactly one candidate for each position
+    // positions that actually have at least one candidate
+    const positionsToVote = Object.entries(candidates)
+      .filter(([, list]) => list && list.length > 0)
+      .map(([pos]) => pos);
+
+    // Ensure user selected a candidate for each position
     const missing = positionsToVote.filter((pos) => !selectedCandidates[pos]);
     if (missing.length > 0) {
       toast.error(
@@ -95,12 +102,18 @@ const Vote = () => {
       return;
     }
 
-    const votes = positionsToVote.map((position) => ({
-      position,
-      candidateId: selectedCandidates[position]?.Id,
-    }));
+    const votes = positionsToVote.map((position) => {
+      const candidate = selectedCandidates[position]!;
+      return {
+        position,
+        // make sure it's a plain number
+        candidateId: Number(candidate.Id),
+      };
+    });
 
     try {
+      setSubmitting(true);
+
       const token = localStorage.getItem("token");
       if (!token) {
         toast.error("You must be logged in to vote.");
@@ -119,14 +132,17 @@ const Vote = () => {
 
       const data = await response.json();
 
-      if (!response.ok)
+      if (!response.ok) {
         throw new Error(data.error || "Failed to submit votes");
+      }
 
       toast.success("✅ Your votes have been submitted successfully!");
       navigate("/results");
     } catch (error: any) {
       console.error("Vote submission error:", error);
       toast.error(error.message || "Failed to submit votes");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -197,9 +213,9 @@ const Vote = () => {
           <Button
             onClick={handleSubmit}
             className="px-6 py-2 text-lg font-semibold"
-            disabled={loading}
+            disabled={loading || submitting}
           >
-            Submit Vote
+            {submitting ? "Submitting..." : "Submit Vote"}
           </Button>
         </div>
       </div>

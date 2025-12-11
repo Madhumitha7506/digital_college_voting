@@ -7,60 +7,92 @@ const { authenticateToken } = require("../middleware/auth");
 const router = express.Router();
 
 /* ===========================================================
-   CAST a vote
-   Calls: sp_CastVote
-   Emits: "vote_cast" via socket.io
+   CAST votes (supports one or many positions)
+   Frontend can send:
+   {
+     votes: [
+       { position: "president", candidateId: 1 },
+       { position: "secretary", candidateId: 5 }
+     ]
+   }
+
+   For backward compatibility, it also accepts:
+   { CandidateId: 1 } or { candidateId: 1 }
    =========================================================== */
 router.post("/", authenticateToken, async (req, res) => {
   try {
-    const { CandidateId } = req.body;
-    const userId = req.user.id;
+    const voterId = req.user.id;
 
-    const request = pool.request();
-    request.input("VoterId", sql.Int, userId);
-    request.input("CandidateId", sql.Int, CandidateId);
-    request.output("VoteId", sql.Int);
+    let { votes } = req.body;
 
-    const result = await request.execute("sp_CastVote");
+    // Backward-compat: if no array, treat as single vote
+    if (!Array.isArray(votes)) {
+      const singleId = req.body.candidateId || req.body.CandidateId;
+      if (!singleId) {
+        return res
+          .status(400)
+          .json({ error: "No candidate selected to vote for." });
+      }
+      votes = [{ position: null, candidateId: singleId }];
+    }
 
-    // 🔔 Fetch candidate info for notification
-    const candRes = await pool
-      .request()
-      .input("CandidateId", sql.Int, CandidateId)
-      .query(
-        `SELECT CandidateId, Name, Position, Gender
-         FROM dbo.Candidates
-         WHERE CandidateId = @CandidateId`
-      );
+    if (votes.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "No candidate selected to vote for." });
+    }
 
-    const candidate = candRes.recordset[0];
+    const recorded = [];
 
-    // 🔔 Emit socket event so admin sees live notification
-    const io = req.app.get("io");
-    if (io && candidate) {
-      io.emit("vote_cast", {
-        candidateId: candidate.CandidateId,
-        candidateName: candidate.Name,
-        position: candidate.Position,
-        gender: candidate.Gender,
-        voterId: userId,
-        time: new Date().toISOString(),
-      });
+    for (const v of votes) {
+      const candidateId = v.candidateId || v.CandidateId;
+
+      if (!candidateId) {
+        // Skip empty entries (shouldn't normally happen)
+        continue;
+      }
+
+      const request = pool.request();
+      request.input("VoterId", sql.Int, voterId);
+      request.input("CandidateId", sql.Int, candidateId);
+      request.output("VoteId", sql.Int);
+
+      try {
+        const result = await request.execute("sp_CastVote");
+
+        recorded.push({
+          position: v.position || null,
+          candidateId,
+          voteId: result.output.VoteId,
+        });
+      } catch (err) {
+        // If SQL raised our custom RAISERROR, bubble it up nicely
+        console.error(
+          "❌ Error casting vote for candidate:",
+          candidateId,
+          err
+        );
+        // If one fails, stop and return that error
+        return res
+          .status(400)
+          .json({ error: err.message || "Failed to cast vote" });
+      }
     }
 
     res.json({
       success: true,
-      VoteId: result.output.VoteId,
-      message: "Vote recorded successfully",
+      votesRecorded: recorded.length,
+      details: recorded,
+      message: "Vote(s) recorded successfully",
     });
   } catch (err) {
-    console.error("❌ Error casting vote:", err);
-    res.status(500).json({ error: err.message || "Failed to cast vote" });
+    console.error("❌ Error casting votes:", err);
+    res.status(500).json({ error: err.message || "Failed to cast votes" });
   }
 });
 
 /* ===========================================================
-   LIVE RESULTS (with counts)
+   LIVE RESULTS (with counts) - unchanged
    Calls: sp_GetResults
    =========================================================== */
 router.get("/results", authenticateToken, async (req, res) => {

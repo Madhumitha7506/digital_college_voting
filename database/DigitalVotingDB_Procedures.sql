@@ -60,13 +60,13 @@ GO
 -- Add candidate
 ---------------------------------------------------------------
 CREATE PROCEDURE dbo.sp_AddCandidate
-    @Name       NVARCHAR(200),
-    @Position   NVARCHAR(100),
-    @Gender     NVARCHAR(20) = NULL,
-    @Manifesto  NVARCHAR(1000) = NULL,
-    @PhotoUrl   NVARCHAR(500) = NULL,
-    @IsActive   BIT = 1,
-    @CandidateId INT OUTPUT
+    @Name        NVARCHAR(200),
+    @Position    NVARCHAR(100),
+    @Gender      NVARCHAR(20) = NULL,
+    @Manifesto   NVARCHAR(1000) = NULL,
+    @PhotoUrl    NVARCHAR(500) = NULL,
+    @IsActive    BIT         = 1,
+    @CandidateId INT         OUTPUT
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -88,7 +88,7 @@ CREATE PROCEDURE dbo.sp_UpdateCandidate
     @Gender      NVARCHAR(20) = NULL,
     @Manifesto   NVARCHAR(1000) = NULL,
     @PhotoUrl    NVARCHAR(500) = NULL,
-    @IsActive    BIT = 1
+    @IsActive    BIT           = 1
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -149,21 +149,21 @@ BEGIN
     BEGIN
         RAISERROR('Candidate not found or inactive.', 16, 1);
         RETURN;
-    END
+    END;
 
     -- Ensure voter exists
     IF NOT EXISTS (SELECT 1 FROM dbo.Voters WHERE VoterId = @VoterId)
     BEGIN
         RAISERROR('Voter not found.', 16, 1);
         RETURN;
-    END
+    END;
 
     -- Prevent double voting for same position
     IF EXISTS (SELECT 1 FROM dbo.Votes WHERE VoterId = @VoterId AND Position = @Position)
     BEGIN
         RAISERROR('You have already voted for this position.', 16, 1);
         RETURN;
-    END
+    END;
 
     INSERT INTO dbo.Votes (VoterId, CandidateId, Position)
     VALUES (@VoterId, @CandidateId, @Position);
@@ -208,22 +208,50 @@ GO
 /* ===========================================================
    FEEDBACK
    Used by /api/feedback routes
+   Matches extra survey fields + one-per-voter
    =========================================================== */
 
 ---------------------------------------------------------------
--- Add feedback
+-- Add feedback (one per voter)
 ---------------------------------------------------------------
 CREATE PROCEDURE dbo.sp_AddFeedback
-    @VoterId   INT = NULL,
-    @Message   NVARCHAR(1000),
-    @Rating    INT = NULL,
-    @FeedbackId INT OUTPUT
+    @VoterId               INT,
+    @Message               NVARCHAR(1000),
+    @Rating                INT           = NULL,
+    @IsRegisteredVoter     BIT           = NULL,
+    @CandidateSatisfaction INT           = NULL,
+    @ProcessTrust          INT           = NULL,
+    @Motivation            NVARCHAR(20)  = NULL,
+    @FeedbackId            INT           OUTPUT
 AS
 BEGIN
     SET NOCOUNT ON;
 
-    INSERT INTO dbo.Feedback (VoterId, Message, Rating)
-    VALUES (@VoterId, @Message, @Rating);
+    -- Enforce: only one feedback per voter
+    IF EXISTS (SELECT 1 FROM dbo.Feedback WHERE VoterId = @VoterId)
+    BEGIN
+        RAISERROR('Feedback already submitted for this voter.', 16, 1);
+        RETURN;
+    END;
+
+    INSERT INTO dbo.Feedback
+        (VoterId,
+         Message,
+         Rating,
+         IsRegisteredVoter,
+         CandidateSatisfaction,
+         ProcessTrust,
+         Motivation,
+         CreatedAt)
+    VALUES
+        (@VoterId,
+         @Message,
+         @Rating,
+         @IsRegisteredVoter,
+         @CandidateSatisfaction,
+         @ProcessTrust,
+         @Motivation,
+         SYSDATETIME());
 
     SET @FeedbackId = SCOPE_IDENTITY();
 END
@@ -241,6 +269,10 @@ BEGIN
         f.FeedbackId,
         f.Message,
         f.Rating,
+        f.IsRegisteredVoter,
+        f.CandidateSatisfaction,
+        f.ProcessTrust,
+        f.Motivation,
         f.CreatedAt,
         f.VoterId,
         v.FullName,
@@ -306,6 +338,6 @@ BEGIN
         UPDATE dbo.OtpCodes
         SET IsUsed = 1
         WHERE OtpId = @OtpId;
-    END
+    END;
 END
 GO

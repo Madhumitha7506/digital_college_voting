@@ -10,6 +10,7 @@ interface Profile {
   email: string;
   phone?: string;
   studentId?: string;
+  dateOfBirth?: string | null;
 }
 
 type Role = "admin" | "voter";
@@ -23,6 +24,7 @@ const SettingsPage = () => {
     email: "",
     phone: "",
     studentId: "",
+    dateOfBirth: "",
   });
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
@@ -78,6 +80,7 @@ const SettingsPage = () => {
           email: data.email ?? "",
           phone: data.phone ?? "",
           studentId: data.studentId ?? "",
+          dateOfBirth: data.dateOfBirth ?? "",
         });
       } catch (err: any) {
         console.error("Profile load error:", err);
@@ -110,7 +113,6 @@ const SettingsPage = () => {
         }
 
         if (data.electionDate) {
-          // store only YYYY-MM-DD part
           const d = (data.electionDate as string).slice(0, 10);
           setElectionDate(d);
           localStorage.setItem("electionDate", d);
@@ -143,11 +145,34 @@ const SettingsPage = () => {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(profile),
+        body: JSON.stringify({
+          fullName: profile.fullName,
+          email: profile.email,
+          phone: profile.phone,
+          dateOfBirth: profile.dateOfBirth || null,
+        }),
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to save profile");
+
+      // Update localStorage user so Home dashboard reflects changes
+      const rawUser = localStorage.getItem("user");
+      if (rawUser) {
+        try {
+          const u = JSON.parse(rawUser);
+          const updatedUser = {
+            ...u,
+            fullName: profile.fullName,
+            email: profile.email,
+            phone: profile.phone,
+            studentId: profile.studentId,
+          };
+          localStorage.setItem("user", JSON.stringify(updatedUser));
+        } catch {
+          // ignore parse errors
+        }
+      }
 
       toast.success("Profile updated successfully.");
     } catch (err: any) {
@@ -237,11 +262,17 @@ const SettingsPage = () => {
                   }
                 />
                 <Input
-                  placeholder="Student ID"
-                  value={profile.studentId}
+                  type="date"
+                  placeholder="Date of Birth"
+                  value={profile.dateOfBirth || ""}
                   onChange={(e) =>
-                    setProfile({ ...profile, studentId: e.target.value })
+                    setProfile({ ...profile, dateOfBirth: e.target.value })
                   }
+                />
+                <Input
+                  placeholder="Student ID"
+                  value={profile.studentId || ""}
+                  disabled
                 />
                 <Button
                   onClick={handleProfileSave}
