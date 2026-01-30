@@ -2,8 +2,8 @@
 const sql = require("mssql");
 
 const config = {
-  // Use the same server name you see in SSMS: here it's 10.0.0.99
-  server: process.env.DB_SERVER || "10.0.0.99",
+  // Use the same server name you see in SSMS: here it's localhost
+  server: process.env.DB_SERVER || "localhost",
 
   // DO NOT force a port here; let the driver / SQL Browser resolve it
   user: process.env.DB_USER || "voting_user",

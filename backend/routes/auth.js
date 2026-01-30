@@ -30,7 +30,7 @@ function signToken(voter) {
     {
       // ⏱️ token validity: 7 days (good for demo / project work)
       // You can change this to "12h" or "1d" later if needed.
-      expiresIn: "60d",
+      expiresIn: "360d",
     }
   );
 }

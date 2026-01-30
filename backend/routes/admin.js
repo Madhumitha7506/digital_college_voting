@@ -131,17 +131,21 @@ router.post(
     try {
       await ensureSystemSettingsTable();
 
+      // Set ResultsPublished = false
       await pool.request().query(`
         UPDATE dbo.SystemSettings
-          SET SettingValue = 'false'
+        SET SettingValue = 'false'
         WHERE SettingKey = 'ResultsPublished';
+      `);
 
+      // Clear ResultsPublishedAt
+      await pool.request().query(`
         UPDATE dbo.SystemSettings
-          SET SettingValue = NULL
+        SET SettingValue = NULL
         WHERE SettingKey = 'ResultsPublishedAt';
       `);
 
-      // Optional socket notification for demo
+      // Optional socket notification
       const io = req.app.get("io");
       if (io) {
         io.emit("notification", {
@@ -163,6 +167,7 @@ router.post(
     }
   }
 );
+
 
 /* ===========================================================
    GET /api/admin/stats  (ADMIN ONLY)
