@@ -1,4 +1,3 @@
-// backend/routes/votes.js
 const express = require("express");
 const sql = require("mssql");
 const pool = require("../config/db");
@@ -6,103 +5,165 @@ const { authenticateToken } = require("../middleware/auth");
 
 const router = express.Router();
 
-/* ===========================================================
-   CAST votes (supports one or many positions)
-   Frontend can send:
-   {
-     votes: [
-       { position: "president", candidateId: 1 },
-       { position: "secretary", candidateId: 5 }
-     ]
-   }
-
-   For backward compatibility, it also accepts:
-   { CandidateId: 1 } or { candidateId: 1 }
-   =========================================================== */
+/* ================= SUBMIT VOTE ================= */
 router.post("/", authenticateToken, async (req, res) => {
+  let transaction;
+
   try {
     const voterId = req.user.id;
+    const { votes } = req.body;
 
-    let { votes } = req.body;
-
-    // Backward-compat: if no array, treat as single vote
-    if (!Array.isArray(votes)) {
-      const singleId = req.body.candidateId || req.body.CandidateId;
-      if (!singleId) {
-        return res
-          .status(400)
-          .json({ error: "No candidate selected to vote for." });
-      }
-      votes = [{ position: null, candidateId: singleId }];
+    if (!votes || !Array.isArray(votes) || votes.length === 0) {
+      return res.status(400).json({ error: "No votes provided" });
     }
 
-    if (votes.length === 0) {
-      return res
-        .status(400)
-        .json({ error: "No candidate selected to vote for." });
+    const existing = await pool
+      .request()
+      .input("VoterId", sql.Int, voterId)
+      .query("SELECT COUNT(*) AS Count FROM dbo.Votes WHERE VoterId = @VoterId");
+
+    if (existing.recordset[0].Count > 0) {
+      return res.status(400).json({ error: "You have already voted" });
     }
 
-    const recorded = [];
+    transaction = pool.transaction();
+    await transaction.begin();
 
-    for (const v of votes) {
-      const candidateId = v.candidateId || v.CandidateId;
-
-      if (!candidateId) {
-        // Skip empty entries (shouldn't normally happen)
-        continue;
-      }
-
-      const request = pool.request();
-      request.input("VoterId", sql.Int, voterId);
-      request.input("CandidateId", sql.Int, candidateId);
-      request.output("VoteId", sql.Int);
-
-      try {
-        const result = await request.execute("sp_CastVote");
-
-        recorded.push({
-          position: v.position || null,
-          candidateId,
-          voteId: result.output.VoteId,
-        });
-      } catch (err) {
-        // If SQL raised our custom RAISERROR, bubble it up nicely
-        console.error(
-          "❌ Error casting vote for candidate:",
-          candidateId,
-          err
-        );
-        // If one fails, stop and return that error
-        return res
-          .status(400)
-          .json({ error: err.message || "Failed to cast vote" });
-      }
+    for (const vote of votes) {
+      await transaction
+        .request()
+        .input("VoterId", sql.Int, voterId)
+        .input("CandidateId", sql.Int, vote.candidateId)
+        .query(`
+          INSERT INTO dbo.Votes (VoterId, CandidateId, VotedAt)
+          VALUES (@VoterId, @CandidateId, GETUTCDATE())
+        `);
     }
 
-    res.json({
-      success: true,
-      votesRecorded: recorded.length,
-      details: recorded,
-      message: "Vote(s) recorded successfully",
-    });
+    await transaction.commit();
+
+    const broadcastTurnout = req.app.get("broadcastTurnout");
+    if (broadcastTurnout) await broadcastTurnout();
+
+    res.json({ success: true });
   } catch (err) {
-    console.error("❌ Error casting votes:", err);
-    res.status(500).json({ error: err.message || "Failed to cast votes" });
+    if (transaction) await transaction.rollback();
+    console.error(err);
+    res.status(500).json({ error: "Vote submission failed" });
   }
 });
 
-/* ===========================================================
-   LIVE RESULTS (with counts) - unchanged
-   Calls: sp_GetResults
-   =========================================================== */
+/* ================= STATUS ================= */
+router.get("/status", authenticateToken, async (req, res) => {
+  try {
+    const voterId = req.user.id;
+
+    const userVote = await pool
+      .request()
+      .input("VoterId", sql.Int, voterId)
+      .query("SELECT COUNT(*) AS Count FROM dbo.Votes WHERE VoterId = @VoterId");
+
+    const votedCount = await pool
+      .request()
+      .query("SELECT COUNT(DISTINCT VoterId) AS VotedCount FROM dbo.Votes");
+
+    const totalVoters = await pool
+      .request()
+      .query("SELECT COUNT(*) AS TotalVoters FROM dbo.Voters");
+
+    const total = totalVoters.recordset[0].TotalVoters || 1;
+    const voted = votedCount.recordset[0].VotedCount || 0;
+
+    res.json({
+      hasVoted: userVote.recordset[0].Count > 0,
+      votedCount: voted,
+      totalVoters: total,
+      turnoutPercent: parseFloat(((voted / total) * 100).toFixed(2)),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Status check failed" });
+  }
+});
+
+/* ================= SLIP ================= */
+router.get("/slip", authenticateToken, async (req, res) => {
+  try {
+    const voterId = req.user.id;
+
+    const voter = await pool
+      .request()
+      .input("VoterId", sql.Int, voterId)
+      .query(`
+        SELECT FullName, Email, StudentId
+        FROM dbo.Voters
+        WHERE VoterId = @VoterId
+      `);
+
+    if (voter.recordset.length === 0) {
+      return res.status(404).json({ error: "Voter not found" });
+    }
+
+    const votes = await pool
+      .request()
+      .input("VoterId", sql.Int, voterId)
+      .query(`
+        SELECT 
+          v.VoteId,
+          v.VotedAt,
+          c.Name AS CandidateName,
+          c.Position
+        FROM dbo.Votes v
+        JOIN dbo.Candidates c ON v.CandidateId = c.CandidateId
+        WHERE v.VoterId = @VoterId
+        ORDER BY c.Position
+      `);
+
+    if (votes.recordset.length === 0) {
+      return res.status(404).json({ error: "You have not voted yet." });
+    }
+
+    // Convert UTC → IST
+    const formattedVotes = votes.recordset.map((v) => ({
+      ...v,
+      VotedAt: new Date(v.VotedAt).toLocaleString("en-IN", {
+        timeZone: "Asia/Kolkata",
+      }),
+    }));
+
+    res.json({
+      voter: voter.recordset[0].FullName,
+      email: voter.recordset[0].Email,
+      studentId: voter.recordset[0].StudentId,
+      votes: formattedVotes,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Slip generation failed" });
+  }
+});
+
+/* ================= RESULTS ================= */
 router.get("/results", authenticateToken, async (req, res) => {
   try {
-    const request = pool.request();
-    const result = await request.execute("sp_GetResults");
-    res.json(result.recordset);
+    const results = await pool.request().query(`
+      SELECT 
+        c.CandidateId,
+        c.Name,
+        c.Position,
+        c.Gender,
+        COUNT(v.VoteId) AS TotalVotes
+      FROM dbo.Candidates c
+      LEFT JOIN dbo.Votes v ON c.CandidateId = v.CandidateId
+      WHERE c.IsActive = 1
+      GROUP BY c.CandidateId, c.Name, c.Position, c.Gender
+      ORDER BY c.Position, TotalVotes DESC
+    `);
+
+    res.json(results.recordset);
   } catch (err) {
-    console.error("❌ Error fetching results:", err);
-    res.status(500).json({ error: "Failed to fetch results" });
+    console.error(err);
+    res.status(500).json({ error: "Results fetch failed" });
   }
 });
 

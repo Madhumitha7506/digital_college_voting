@@ -6,17 +6,23 @@ const pool = require("../config/db");
 
 const router = express.Router();
 
-/* Determine user role */
+/* ===========================================================
+   Determine user role
+   =========================================================== */
 function getRoleFromVoter(voter) {
-  // Simple rule: this email is treated as admin
-  if (voter.Email.toLowerCase() === "admin@demo.com") {
+  // Change this email if your admin email is different
+  if (voter.Email && voter.Email.toLowerCase() === "admin@demo.com") {
     return "admin";
   }
   return "voter";
 }
 
-/* Sign JWT Token */
+/* ===========================================================
+   Sign JWT Token
+   =========================================================== */
 function signToken(voter) {
+  const role = getRoleFromVoter(voter);
+
   return jwt.sign(
     {
       id: voter.VoterId,
@@ -24,13 +30,11 @@ function signToken(voter) {
       email: voter.Email,
       gender: voter.Gender,
       studentId: voter.StudentId,
-      role: getRoleFromVoter(voter),
+      role: role,
     },
     process.env.JWT_SECRET || "changeme",
     {
-      // ⏱️ token validity: 7 days (good for demo / project work)
-      // You can change this to "12h" or "1d" later if needed.
-      expiresIn: "60d",
+      expiresIn: "77d", // safer than 160d
     }
   );
 }
@@ -49,7 +53,7 @@ router.post("/register", async (req, res) => {
       });
     }
 
-    // 1. Check if email exists
+    // Check if email exists
     const check = await pool
       .request()
       .input("Email", sql.NVarChar, email)
@@ -59,10 +63,8 @@ router.post("/register", async (req, res) => {
       return res.status(400).json({ error: "Email already registered" });
     }
 
-    // 2. Hash password
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // 3. Insert voter
     const result = await pool
       .request()
       .input("FullName", sql.NVarChar, name)
@@ -72,7 +74,8 @@ router.post("/register", async (req, res) => {
       .input("Gender", sql.NVarChar, gender || null)
       .input("StudentId", sql.NVarChar, student_id || null)
       .query(`
-        INSERT INTO dbo.Voters (FullName, Email, PasswordHash, Phone, Gender, StudentId, IsVerified, CreatedAt)
+        INSERT INTO dbo.Voters 
+        (FullName, Email, PasswordHash, Phone, Gender, StudentId, IsVerified, CreatedAt)
         OUTPUT INSERTED.*
         VALUES (@FullName, @Email, @PasswordHash, @Phone, @Gender, @StudentId, 1, SYSDATETIME());
       `);
@@ -82,7 +85,15 @@ router.post("/register", async (req, res) => {
     res.json({
       success: true,
       message: "Registration successful",
-      voter,
+      user: {
+        id: voter.VoterId,
+        fullName: voter.FullName,
+        email: voter.Email,
+        gender: voter.Gender,
+        studentId: voter.StudentId,
+        phone: voter.Phone,
+        role: getRoleFromVoter(voter),
+      },
     });
   } catch (err) {
     console.error("REGISTER ERROR:", err);
@@ -118,8 +129,8 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
-    // 🔑 issue JWT (valid for 7 days now)
     const token = signToken(voter);
+    const role = getRoleFromVoter(voter);
 
     res.json({
       success: true,
@@ -131,7 +142,7 @@ router.post("/login", async (req, res) => {
         gender: voter.Gender,
         studentId: voter.StudentId,
         phone: voter.Phone,
-        role: getRoleFromVoter(voter),
+        role: role,   // 🔥 IMPORTANT
       },
     });
   } catch (err) {

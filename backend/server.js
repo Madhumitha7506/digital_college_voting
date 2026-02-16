@@ -3,24 +3,25 @@ const cors = require("cors");
 const path = require("path");
 const http = require("http");
 const { Server } = require("socket.io");
-require("dotenv").config({ path: path.resolve(__dirname, "../../.env") });
+require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 
-// ✅ Initialize DB connection
+
+// DB connection
 require("./config/db");
 
-// ✅ Import routes
+// Routes
 const authRoutes = require("./routes/auth");
 const candidateRoutes = require("./routes/candidates");
 const voteRoutes = require("./routes/votes");
 const feedbackRoutes = require("./routes/feedback");
 const adminRoutes = require("./routes/admin");
-const notificationRoutes = require("./routes/notifications");
+//const notificationRoutes = require("./routes/notifications");
 const settingsRoutes = require("./routes/settings");
+const announcementRoutes = require("./routes/announcements");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ✅ HTTP + WebSocket server
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
@@ -30,19 +31,17 @@ const io = new Server(server, {
       "http://localhost:8081",
     ],
     methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true,
   },
 });
 
-
 io.on("connection", (socket) => {
-  console.log(`🟢 Client connected: ${socket.id}`);
-  socket.on("disconnect", () => console.log(`🔴 Disconnected: ${socket.id}`));
+  console.log("🟢 Client connected:", socket.id);
 });
 
-// Make socket available to routes
 app.set("io", io);
 
-// ✅ Middleware
+// Middleware
 app.use(
   cors({
     origin: [
@@ -53,29 +52,47 @@ app.use(
     credentials: true,
   })
 );
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ✅ Routes
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+// REAL-TIME TURNOUT
+app.set("broadcastTurnout", async () => {
+  try {
+    const pool = require("./config/db");
+
+    const result = await pool.request().query(`
+      SELECT 
+        COUNT(DISTINCT VoterId) AS VotedCount,
+        (SELECT COUNT(*) FROM dbo.Voters) AS TotalVoters
+      FROM dbo.Votes
+    `);
+
+    const voted = result.recordset[0].VotedCount || 0;
+    const total = result.recordset[0].TotalVoters || 1;
+    const percent = Number(((voted / total) * 100).toFixed(2));
+
+    io.emit("turnoutUpdate", { voted, total, percent });
+  } catch (err) {
+    console.error("Turnout broadcast error:", err);
+  }
+});
+
+// Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/candidates", candidateRoutes);
 app.use("/api/votes", voteRoutes);
 app.use("/api/feedback", feedbackRoutes);
 app.use("/api/admin", adminRoutes);
-app.use("/api/notifications", notificationRoutes);
+//app.use("/api/notifications", notificationRoutes);
 app.use("/api/settings", settingsRoutes);
+app.use("/api/announcements", announcementRoutes);
 
-
-
-// ✅ Health check
+// Health
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", message: "Server and DB running" });
-});
-
-// ✅ Error handler
-app.use((err, req, res, next) => {
-  console.error("Error:", err.stack);
-  res.status(500).json({ error: "Something went wrong!" });
+  res.json({ status: "ok" });
 });
 
 server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));

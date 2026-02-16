@@ -1,4 +1,3 @@
-// backend/routes/feedback.js
 const express = require("express");
 const sql = require("mssql");
 const pool = require("../config/db");
@@ -7,77 +6,44 @@ const { authenticateToken, requireAdmin } = require("../middleware/auth");
 const router = express.Router();
 
 /* ===========================================================
-   POST /api/feedback
-   Body:
-     {
-       message: string,
-       rating?: number,                 // overall / same as candidate satisfaction
-       isRegisteredVoter?: "yes"|"no",
-       candidateSatisfaction?: number,  // 1–5
-       processTrust?: number,           // 1–5
-       motivation?: "more"|"less"|"same"
-     }
-   Calls: sp_AddFeedback
+   STUDENT SUBMIT FEEDBACK
    =========================================================== */
 router.post("/", authenticateToken, async (req, res) => {
   try {
-    const user = req.user;
-    if (!user || !user.id) {
-      return res.status(401).json({ error: "User not authenticated" });
-    }
+    const voterId = req.user.id;
 
     const {
-      message,
-      feedback,
-      rating,
-      isRegisteredVoter,
-      candidateSatisfaction,
-      processTrust,
-      motivation,
+      q1_candidateSatisfaction,
+      q2_keyIssue,
+      q3_processTrust,
+      q4_isRegisteredVoter,
+      recommendation,
     } = req.body;
 
-    const text = (message || feedback || "").trim();
+    // Capture IP address properly
+    let ip =
+      req.headers["x-forwarded-for"] ||
+      req.socket?.remoteAddress ||
+      req.connection?.remoteAddress ||
+      req.ip ||
+      "";
 
-    if (!text) {
-      return res.status(400).json({ error: "Feedback message is required" });
+    if (Array.isArray(ip)) ip = ip[0];
+    if (ip && ip.includes("::ffff:")) {
+      ip = ip.replace("::ffff:", "");
     }
-
-    // 1) Check if feedback already exists for this voter
-    const existing = await pool
-      .request()
-      .input("VoterId", sql.Int, user.id)
-      .query(
-        "SELECT TOP 1 FeedbackId FROM dbo.Feedback WHERE VoterId = @VoterId;"
-      );
-
-    if (existing.recordset.length > 0) {
-      return res
-        .status(400)
-        .json({ error: "Feedback already submitted for this voter." });
-    }
-
-    const isRegBool =
-      isRegisteredVoter === "yes"
-        ? 1
-        : isRegisteredVoter === "no"
-        ? 0
-        : null;
 
     const request = pool.request();
-    request.input("VoterId", sql.Int, user.id);
-    request.input("Message", sql.NVarChar(1000), text);
-    request.input("Rating", sql.Int, rating ?? candidateSatisfaction ?? null);
-    request.input("IsRegisteredVoter", sql.Bit, isRegBool);
-    request.input(
-      "CandidateSatisfaction",
-      sql.Int,
-      candidateSatisfaction ?? null
-    );
-    request.input("ProcessTrust", sql.Int, processTrust ?? null);
-    request.input("Motivation", sql.NVarChar(20), motivation || null);
+
+    request.input("VoterId", sql.Int, voterId);
+    request.input("Q1_CandidateSatisfaction", sql.Int, q1_candidateSatisfaction);
+    request.input("Q2_KeyIssue", sql.NVarChar(255), q2_keyIssue);
+    request.input("Q3_ProcessTrust", sql.Int, q3_processTrust);
+    request.input("Q4_IsRegisteredVoter", sql.Bit, q4_isRegisteredVoter);
+    request.input("Recommendation", sql.NVarChar(sql.MAX), recommendation);
+    request.input("IPAddress", sql.NVarChar(50), ip);
     request.output("FeedbackId", sql.Int);
 
-    // sp_AddFeedback will do the actual insert
     const result = await request.execute("sp_AddFeedback");
 
     res.json({
@@ -86,82 +52,148 @@ router.post("/", authenticateToken, async (req, res) => {
       message: "Feedback submitted successfully",
     });
   } catch (err) {
-    console.error("❌ Error submitting feedback:", err);
-
-    // If stored procedure raised a custom error
-    if (
-      typeof err.message === "string" &&
-      err.message.toLowerCase().includes("already submitted")
-    ) {
-      return res
-        .status(400)
-        .json({ error: "Feedback already submitted for this voter." });
-    }
-
-    res
-      .status(500)
-      .json({ error: err.message || "Failed to submit feedback" });
+    console.error("Feedback submit error:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 
 /* ===========================================================
-   GET /api/feedback/me
-   -> Used by frontend to know if this user already submitted
+   CHECK IF USER SUBMITTED FEEDBACK
    =========================================================== */
 router.get("/me", authenticateToken, async (req, res) => {
   try {
-    const voterId = req.user.id;
     const result = await pool
       .request()
-      .input("VoterId", sql.Int, voterId)
+      .input("VoterId", sql.Int, req.user.id)
       .query(
-        "SELECT TOP 1 FeedbackId, CreatedAt FROM dbo.Feedback WHERE VoterId = @VoterId;"
+        "SELECT TOP 1 FeedbackId FROM dbo.Feedback WHERE VoterId = @VoterId"
       );
 
-    if (result.recordset.length === 0) {
-      return res.json({ hasFeedback: false });
-    }
-
     res.json({
-      hasFeedback: true,
-      feedback: result.recordset[0],
+      hasFeedback: result.recordset.length > 0,
     });
   } catch (err) {
-    console.error("❌ Error checking feedback:", err);
+    console.error("Check feedback error:", err);
     res.status(500).json({ error: "Failed to check feedback" });
   }
 });
 
 /* ===========================================================
-   GET /api/feedback  (Admin only)
-   View all feedback with voter info
+   ADMIN VIEW ALL FEEDBACK
    =========================================================== */
 router.get("/", authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const request = pool.request();
-    const result = await request.query(`
+    const result = await pool.request().query(`
       SELECT 
         f.FeedbackId,
-        f.Message,
-        f.Rating,
-        f.IsRegisteredVoter,
-        f.CandidateSatisfaction,
-        f.ProcessTrust,
-        f.Motivation,
+        f.VoterId,
+        f.Q1_CandidateSatisfaction,
+        f.Q2_KeyIssue,
+        f.Q3_ProcessTrust,
+        f.Q4_IsRegisteredVoter,
+        f.Recommendation,
+        f.IPAddress,
+        ISNULL(f.IsReviewed, 0) AS IsReviewed,
+        f.ReviewedBy,
+        f.ReviewedAt,
         f.CreatedAt,
-        v.VoterId,
         v.FullName,
         v.Email,
         v.StudentId
       FROM dbo.Feedback f
       INNER JOIN dbo.Voters v ON f.VoterId = v.VoterId
-      ORDER BY f.CreatedAt DESC;
+      ORDER BY f.CreatedAt DESC
     `);
 
     res.json(result.recordset);
   } catch (err) {
-    console.error("❌ Error fetching feedback:", err);
-    res.status(500).json({ error: "Failed to fetch feedback" });
+    console.error("Admin fetch feedback error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ===========================================================
+   ADMIN MARK FEEDBACK AS REVIEWED
+   =========================================================== */
+router.put("/:id/review", authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const feedbackId = parseInt(req.params.id);
+    const adminName = req.user?.name || "Admin";
+
+    await pool
+      .request()
+      .input("FeedbackId", sql.Int, feedbackId)
+      .input("ReviewedBy", sql.NVarChar(100), adminName)
+      .query(`
+        UPDATE dbo.Feedback
+        SET IsReviewed = 1,
+            ReviewedBy = @ReviewedBy,
+            ReviewedAt = SYSDATETIME()
+        WHERE FeedbackId = @FeedbackId
+      `);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Mark review error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ===========================================================
+   FEEDBACK ANALYTICS (ADMIN)
+   =========================================================== */
+router.get("/analytics", authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    // ===== Summary =====
+    const summaryResult = await pool.request().query(`
+      SELECT
+        COUNT(*) AS TotalFeedback,
+        AVG(Q1_CandidateSatisfaction) AS AvgSatisfaction,
+        AVG(Q3_ProcessTrust) AS AvgTrust
+      FROM dbo.Feedback
+    `);
+
+    // ===== Satisfaction Distribution =====
+    const satisfactionResult = await pool.request().query(`
+      SELECT 
+        Q1_CandidateSatisfaction AS Rating,
+        COUNT(*) AS Count
+      FROM dbo.Feedback
+      GROUP BY Q1_CandidateSatisfaction
+      ORDER BY Rating
+    `);
+
+    // ===== Trust Distribution =====
+    const trustResult = await pool.request().query(`
+      SELECT 
+        Q3_ProcessTrust AS Trust,
+        COUNT(*) AS Count
+      FROM dbo.Feedback
+      GROUP BY Q3_ProcessTrust
+      ORDER BY Trust
+    `);
+
+    // ===== Top Key Issues =====
+    const issuesResult = await pool.request().query(`
+      SELECT TOP 5
+        Q2_KeyIssue,
+        COUNT(*) AS Count
+      FROM dbo.Feedback
+      GROUP BY Q2_KeyIssue
+      ORDER BY Count DESC
+    `);
+
+    res.json({
+      summary: {
+        ...summaryResult.recordset[0],
+        SatisfactionDistribution: satisfactionResult.recordset,
+        TrustDistribution: trustResult.recordset,
+      },
+      issues: issuesResult.recordset,
+    });
+  } catch (err) {
+    console.error("Analytics error:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 
