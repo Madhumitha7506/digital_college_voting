@@ -1,14 +1,15 @@
-// backend/routes/admin.js
+// routes/admin.js - COMPLETE VERSION with safe dynamic turnout report
+
 const express = require("express");
-const sql = require("mssql");
-const pool = require("../config/db");
-const { authenticateToken, requireAdmin } = require("../middleware/auth");
-
 const router = express.Router();
+const pool = require("../config/db");
+const sql = require("mssql");
 
-/* ===========================================================
-   Helper: ensure SystemSettings table exists + seed default
-   =========================================================== */
+const { authenticateToken, isAdmin } = require("../middleware/auth");
+
+/* ====================================
+   Helper: ensure SystemSettings exists
+   ==================================== */
 async function ensureSystemSettingsTable() {
   await pool.request().query(`
     IF OBJECT_ID('dbo.SystemSettings', 'U') IS NULL
@@ -17,8 +18,6 @@ async function ensureSystemSettingsTable() {
         SettingKey   NVARCHAR(100) NOT NULL PRIMARY KEY,
         SettingValue NVARCHAR(4000) NULL
       );
-
-      -- Seed defaults
       INSERT INTO dbo.SystemSettings (SettingKey, SettingValue)
       VALUES ('ResultsPublished', 'false'),
              ('ResultsPublishedAt', NULL);
@@ -26,17 +25,70 @@ async function ensureSystemSettingsTable() {
   `);
 }
 
-/* ===========================================================
-   GET /api/admin/results-status
-   -> Everyone logged in (admin + voters) can read status
-   =========================================================== */
+/* ====================================
+   GET ADMIN STATISTICS
+   ==================================== */
+router.get("/stats", authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const votersResult = await pool.request().query(`
+      SELECT COUNT(*) AS TotalVoters FROM dbo.Voters
+    `);
+
+    const candidatesResult = await pool.request().query(`
+      SELECT COUNT(*) AS TotalCandidates FROM dbo.Candidates
+    `);
+
+    const votesResult = await pool.request().query(`
+      SELECT COUNT(*) AS TotalVotes FROM dbo.Votes
+    `);
+
+    const totalVoters = votersResult.recordset[0].TotalVoters || 0;
+    const totalVotes = votesResult.recordset[0].TotalVotes || 0;
+
+    const uniqueVotersResult = await pool.request().query(`
+      SELECT COUNT(DISTINCT VoterId) AS UniqueVoters FROM dbo.Votes
+    `);
+    const uniqueVoters = uniqueVotersResult.recordset[0].UniqueVoters || 0;
+
+    const turnoutPercent = totalVoters > 0
+      ? ((uniqueVoters / totalVoters) * 100).toFixed(2)
+      : 0;
+
+    const votesByPositionResult = await pool.request().query(`
+      SELECT 
+        c.Position,
+        COUNT(v.VoteId) AS TotalVotes
+      FROM dbo.Candidates c
+      LEFT JOIN dbo.Votes v ON c.CandidateId = v.CandidateId
+      GROUP BY c.Position
+      ORDER BY c.Position
+    `);
+
+    res.json({
+      totalVoters,
+      totalCandidates: candidatesResult.recordset[0].TotalCandidates || 0,
+      totalVotes,
+      turnoutPercent: parseFloat(turnoutPercent),
+      votesByPosition: votesByPositionResult.recordset,
+    });
+
+  } catch (err) {
+    console.error("❌ Admin stats error:", err);
+    res.status(500).json({ error: "Failed to fetch stats" });
+  }
+});
+
+/* ====================================
+   CHECK RESULTS PUBLICATION STATUS
+   (accessible to all logged-in users)
+   ==================================== */
 router.get("/results-status", authenticateToken, async (req, res) => {
   try {
     await ensureSystemSettingsTable();
 
     const result = await pool.request().query(`
       SELECT
-        MAX(CASE WHEN SettingKey = 'ResultsPublished' THEN SettingValue END) AS ResultsPublished,
+        MAX(CASE WHEN SettingKey = 'ResultsPublished'   THEN SettingValue END) AS ResultsPublished,
         MAX(CASE WHEN SettingKey = 'ResultsPublishedAt' THEN SettingValue END) AS ResultsPublishedAt
       FROM dbo.SystemSettings;
     `);
@@ -46,106 +98,80 @@ router.get("/results-status", authenticateToken, async (req, res) => {
     const publishedAt = row.ResultsPublishedAt || null;
 
     res.json({ published, publishedAt });
+
   } catch (err) {
-    console.error("❌ Error loading results status:", err);
-    res.status(500).json({ error: "Failed to load results status" });
+    console.error("❌ Results status error:", err);
+    res.status(500).json({ error: "Failed to fetch results status" });
   }
 });
 
-/* ===========================================================
-   POST /api/admin/publish-results  (ADMIN ONLY)
-   -> Mark results as published + broadcast notification
-   =========================================================== */
-router.post(
-  "/publish-results",
-  authenticateToken,
-  requireAdmin,
-  async (req, res) => {
-    try {
-      await ensureSystemSettingsTable();
+/* ====================================
+   PUBLISH RESULTS
+   ==================================== */
+router.post("/publish-results", authenticateToken, isAdmin, async (req, res) => {
+  try {
+    await ensureSystemSettingsTable();
 
-      // Get ISO formatted timestamp (YYYY-MM-DDThh:mm:ss)
-      const nowResult = await pool
-        .request()
-        .query(`SELECT CONVERT(NVARCHAR(50), GETDATE(), 126) AS NowStr;`);
-      const nowStr = nowResult.recordset[0].NowStr;
+    const now = new Date().toISOString();
 
-      // Upsert ResultsPublished = 'true'
-      await pool.request().query(`
+    await pool.request()
+      .input("value", sql.NVarChar(sql.MAX), "true")
+      .query(`
         IF EXISTS (SELECT 1 FROM dbo.SystemSettings WHERE SettingKey = 'ResultsPublished')
-          UPDATE dbo.SystemSettings
-          SET SettingValue = 'true'
-          WHERE SettingKey = 'ResultsPublished';
+          UPDATE dbo.SystemSettings SET SettingValue = @value WHERE SettingKey = 'ResultsPublished';
         ELSE
-          INSERT INTO dbo.SystemSettings (SettingKey, SettingValue)
-          VALUES ('ResultsPublished', 'true');
+          INSERT INTO dbo.SystemSettings (SettingKey, SettingValue) VALUES ('ResultsPublished', @value);
       `);
 
-      // Upsert ResultsPublishedAt = timestamp
-      const r2 = pool.request();
-      r2.input("NowStr", sql.NVarChar, nowStr);
-      await r2.query(`
+    await pool.request()
+      .input("value", sql.NVarChar(sql.MAX), now)
+      .query(`
         IF EXISTS (SELECT 1 FROM dbo.SystemSettings WHERE SettingKey = 'ResultsPublishedAt')
-          UPDATE dbo.SystemSettings
-          SET SettingValue = @NowStr
-          WHERE SettingKey = 'ResultsPublishedAt';
+          UPDATE dbo.SystemSettings SET SettingValue = @value WHERE SettingKey = 'ResultsPublishedAt';
         ELSE
-          INSERT INTO dbo.SystemSettings (SettingKey, SettingValue)
-          VALUES ('ResultsPublishedAt', @NowStr);
+          INSERT INTO dbo.SystemSettings (SettingKey, SettingValue) VALUES ('ResultsPublishedAt', @value);
       `);
 
-      // Emit a Socket.IO notification to all clients
-      const io = req.app.get("io");
-      if (io) {
-        io.emit("notification", {
-          type: "results_published",
-          title: "Election Results Published",
-          message:
-            "The Admin has officially published the election results. Please check the Results tab.",
-          publishedAt: nowStr,
-        });
-      }
-
-      res.json({
-        success: true,
-        published: true,
-        publishedAt: nowStr,
-        message: "Results published successfully",
+    const io = req.app.get("io");
+    if (io) {
+      io.emit("notification", {
+        type: "results_published",
+        title: "Election Results Published",
+        message: "The Admin has officially published the election results. Please check the Results tab.",
+        publishedAt: now,
       });
-    } catch (err) {
-      console.error("❌ Error publishing results:", err);
-      res.status(500).json({ error: "Failed to publish results" });
     }
+
+    res.json({ success: true, message: "Results published successfully" });
+
+  } catch (err) {
+    console.error("❌ Error publishing results:", err);
+    res.status(500).json({ error: "Failed to publish results" });
   }
-);
+});
 
-/* ===========================================================
-   POST /api/admin/unpublish-results  (ADMIN ONLY)
-   -> Hide results from students again
-   =========================================================== */
-router.post(
-  "/unpublish-results",
-  authenticateToken,
-  requireAdmin,
-  async (req, res) => {
-    try {
-      await ensureSystemSettingsTable();
+/* ====================================
+   UNPUBLISH RESULTS
+   ==================================== */
+router.post("/unpublish-results", authenticateToken, isAdmin, async (req, res) => {
+  try {
+    await ensureSystemSettingsTable();
 
-      // Set ResultsPublished = false
-      await pool.request().query(`
-        UPDATE dbo.SystemSettings
-        SET SettingValue = 'false'
-        WHERE SettingKey = 'ResultsPublished';
+    await pool.request()
+      .input("value", sql.NVarChar(sql.MAX), "false")
+      .query(`
+        IF EXISTS (SELECT 1 FROM dbo.SystemSettings WHERE SettingKey = 'ResultsPublished')
+          UPDATE dbo.SystemSettings SET SettingValue = @value WHERE SettingKey = 'ResultsPublished';
+        ELSE
+          INSERT INTO dbo.SystemSettings (SettingKey, SettingValue) VALUES ('ResultsPublished', @value);
       `);
 
-      // Clear ResultsPublishedAt
-      await pool.request().query(`
         UPDATE dbo.SystemSettings
-        SET SettingValue = NULL
+          SET SettingValue = NULL
         WHERE SettingKey = 'ResultsPublishedAt';
       `);
 
-      // Optional socket notification
+      // Optional socket notification for demo
       const io = req.app.get("io");
       if (io) {
         io.emit("notification", {
@@ -168,181 +194,163 @@ router.post(
   }
 );
 
-
-/* ===========================================================
-   GET /api/admin/stats  (ADMIN ONLY)
-   -> Overall election stats for Admin dashboard
-   =========================================================== */
-router.get("/stats", authenticateToken, requireAdmin, async (req, res) => {
+/* ====================================
+   DOWNLOAD CANDIDATE REPORT (CSV)
+   ==================================== */
+router.get("/report/candidates", authenticateToken, isAdmin, async (req, res) => {
   try {
-    // Only count verified non-admin voters
-    const votersResult = await pool.request().query(`
-      SELECT COUNT(*) AS TotalVoters 
-      FROM dbo.Voters
-      WHERE IsVerified = 1
-        AND LOWER(Email) <> 'admin@demo.com';
-    `);
+    console.log("=== Generating Candidate Report ===");
 
-    const candidatesResult = await pool
-      .request()
-      .query(`SELECT COUNT(*) AS TotalCandidates FROM dbo.Candidates;`);
-
-    const votesResult = await pool
-      .request()
-      .query(`SELECT COUNT(*) AS TotalVotes FROM dbo.Votes;`);
-
-    const byPositionResult = await pool.request().query(`
+    const result = await pool.request().query(`
       SELECT 
+        c.CandidateId,
+        c.Name,
         c.Position,
-        COUNT(*) AS TotalVotes
-      FROM dbo.Votes v
-      INNER JOIN dbo.Candidates c ON v.CandidateId = c.CandidateId
-      GROUP BY c.Position
-      ORDER BY c.Position;
-    `);
-
-    const byGenderResult = await pool.request().query(`
-      SELECT 
         c.Gender,
-        COUNT(*) AS TotalVotes
-      FROM dbo.Votes v
-      INNER JOIN dbo.Candidates c ON v.CandidateId = c.CandidateId
-      GROUP BY c.Gender
-      ORDER BY c.Gender;
+        COUNT(v.VoteId) AS VoteCount
+      FROM dbo.Candidates c
+      LEFT JOIN dbo.Votes v ON c.CandidateId = v.CandidateId
+      GROUP BY c.CandidateId, c.Name, c.Position, c.Gender
+      ORDER BY c.Position, VoteCount DESC
     `);
 
-    const totalVoters = votersResult.recordset[0]?.TotalVoters || 0;
-    const totalCandidates = candidatesResult.recordset[0]?.TotalCandidates || 0;
-    const totalVotes = votesResult.recordset[0]?.TotalVotes || 0;
+    console.log(`Found ${result.recordset.length} candidates`);
 
-    // Turnout = how many votes / how many registered voters
-    // (for demo this might be >100% if same student can vote multiple times)
-    const turnoutPercent =
-      totalVoters === 0 ? 0 : Math.round((totalVotes / totalVoters) * 100);
+    const headers = ["CandidateId", "Name", "Position", "Gender", "VoteCount"];
+    const rows = result.recordset.map((r) => [
+      r.CandidateId,
+      `"${(r.Name     || "").replace(/"/g, '""')}"`,
+      `"${(r.Position || "").replace(/"/g, '""')}"`,
+      `"${(r.Gender   || "").replace(/"/g, '""')}"`,
+      r.VoteCount || 0,
+    ]);
 
-    res.json({
-      totalVoters,
-      totalCandidates,
-      totalVotes,
-      turnoutPercent,
-      votesByPosition: byPositionResult.recordset,
-      votesByGender: byGenderResult.recordset,
-    });
+    const csv = [headers.join(","), ...rows.map(row => row.join(","))].join("\n");
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=candidate_report.csv");
+    res.send(csv);
+
   } catch (err) {
-    console.error("❌ Admin stats error:", err);
-    res.status(500).json({ error: "Failed to load admin stats" });
+    console.error("❌ Candidate report error:", err);
+    res.status(500).json({ error: "Failed to generate report", details: err.message });
   }
 });
 
-/* ===========================================================
-   GET /api/admin/report/turnout   (ADMIN ONLY)
-   -> Download turnout & position summary as CSV
-   =========================================================== */
-router.get(
-  "/report/turnout",
-  authenticateToken,
-  requireAdmin,
-  async (req, res) => {
-    try {
-      const votersResult = await pool.request().query(`
-        SELECT COUNT(*) AS TotalVoters 
-        FROM dbo.Voters
-        WHERE IsVerified = 1
-          AND LOWER(Email) <> 'admin@demo.com';
-      `);
-
-      const candidatesResult = await pool
-        .request()
-        .query(`SELECT COUNT(*) AS TotalCandidates FROM dbo.Candidates;`);
-
-      const votesResult = await pool
-        .request()
-        .query(`SELECT COUNT(*) AS TotalVotes FROM dbo.Votes;`);
-
-      const byPositionResult = await pool.request().query(`
-        SELECT 
-          c.Position,
-          COUNT(*) AS TotalVotes
-        FROM dbo.Votes v
-        INNER JOIN dbo.Candidates c ON v.CandidateId = c.CandidateId
-        GROUP BY c.Position
-        ORDER BY c.Position;
-      `);
-
-      const totalVoters = votersResult.recordset[0]?.TotalVoters || 0;
-      const totalCandidates = candidatesResult.recordset[0]?.TotalCandidates || 0;
-      const totalVotes = votesResult.recordset[0]?.TotalVotes || 0;
-      const turnoutPercent =
-        totalVoters === 0 ? 0 : Math.round((totalVotes / totalVoters) * 100);
-
-      // Build CSV
-      let csv = "";
-      csv += "Metric,Value\r\n";
-      csv += `Total voters,${totalVoters}\r\n`;
-      csv += `Total candidates,${totalCandidates}\r\n`;
-      csv += `Total votes cast,${totalVotes}\r\n`;
-      csv += `Turnout (%),${turnoutPercent}\r\n`;
-      csv += "\r\n";
-      csv += "Position,Votes\r\n";
-      byPositionResult.recordset.forEach((row) => {
-        csv += `${row.Position},${row.TotalVotes}\r\n`;
-      });
-
-      res.setHeader("Content-Type", "text/csv");
-      res.setHeader(
-        "Content-Disposition",
-        'attachment; filename="turnout_report.csv"'
-      );
-      res.send(csv);
-    } catch (err) {
-      console.error("❌ Turnout report error:", err);
-      res.status(500).send("Failed to generate turnout report");
-    }
+/* ====================================
+   DEBUG: Show Voters table columns
+   (remove this route after confirming column names)
+   ==================================== */
+router.get("/debug-voters", authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const columnsResult = await pool.request().query(`
+      SELECT COLUMN_NAME, DATA_TYPE
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_NAME = 'Voters' AND TABLE_SCHEMA = 'dbo'
+      ORDER BY ORDINAL_POSITION
+    `);
+    const sampleResult = await pool.request().query(`SELECT TOP 1 * FROM dbo.Voters`);
+    res.json({
+      columns: columnsResult.recordset,
+      sample: sampleResult.recordset,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-);
+});
 
-/* ===========================================================
-   GET /api/admin/report/candidates   (ADMIN ONLY)
-   -> Download candidate-wise vote counts as CSV
-   =========================================================== */
-router.get(
-  "/report/candidates",
-  authenticateToken,
-  requireAdmin,
-  async (req, res) => {
-    try {
-      const result = await pool.request().query(`
-        SELECT 
-          c.CandidateId,
-          c.Name,
-          c.Position,
-          c.Gender,
-          ISNULL(c.Manifesto, '') AS Manifesto,
-          COUNT(v.VoteId) AS Votes
-        FROM dbo.Candidates c
-        LEFT JOIN dbo.Votes v ON c.CandidateId = v.CandidateId
-        GROUP BY 
-          c.CandidateId, c.Name, c.Position, c.Gender, c.Manifesto
-        ORDER BY c.Position, Votes DESC, c.Name;
-      `);
+/* ====================================
+   DOWNLOAD TURNOUT REPORT (CSV)
+   Step 1: reads actual column names from INFORMATION_SCHEMA
+   Step 2: builds query string dynamically — SQL Server only
+           compiles what we actually send, so no "Invalid column" errors
+   ==================================== */
+router.get("/report/turnout", authenticateToken, isAdmin, async (req, res) => {
+  try {
+    console.log("=== Generating Turnout Report ===");
 
-      let csv = "CandidateId,Name,Position,Gender,Votes,Manifesto\r\n";
-      result.recordset.forEach((row) => {
-        const safeManifesto = (row.Manifesto || "").replace(/,/g, " ");
-        csv += `${row.CandidateId},${row.Name},${row.Position},${row.Gender},${row.Votes},${safeManifesto}\r\n`;
-      });
+    // Step 1 — find out which columns actually exist in dbo.Voters
+    const colCheck = await pool.request().query(`
+      SELECT COLUMN_NAME
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_NAME   = 'Voters'
+        AND TABLE_SCHEMA = 'dbo'
+      ORDER BY ORDINAL_POSITION
+    `);
 
-      res.setHeader("Content-Type", "text/csv");
-      res.setHeader(
-        "Content-Disposition",
-        'attachment; filename="candidate_report.csv"'
-      );
-      res.send(csv);
-    } catch (err) {
-      console.error("❌ Candidate report error:", err);
-      res.status(500).send("Failed to generate candidate report");
+    const existingCols  = colCheck.recordset.map((r) => r.COLUMN_NAME);
+    console.log("dbo.Voters columns:", existingCols);
+
+    const has = (col) => existingCols.includes(col);
+
+    // Step 2 — build SELECT / GROUP BY / ORDER BY as plain strings
+    //          Only reference columns confirmed to exist
+    const selectCols  = ["v.VoterId"];
+    const groupCols   = ["v.VoterId"];
+    const csvHeaders  = ["VoterId"];
+
+    // Always-present candidate columns — add only if found
+    for (const col of ["FullName", "Email", "StudentId", "Department", "Year", "Batch", "Course", "Phone"]) {
+      if (has(col)) {
+        selectCols.push(`vt.${col}`);
+        groupCols.push(`vt.${col}`);
+        csvHeaders.push(col);
+      }
     }
+
+    selectCols.push("COUNT(v.VoteId) AS VotesCast");
+    selectCols.push("MIN(v.VotedAt)  AS FirstVote");
+    selectCols.push("MAX(v.VotedAt)  AS LastVote");
+    csvHeaders.push("VotesCast", "FirstVote", "LastVote");
+
+    const orderBy = has("FullName") ? "vt.FullName" : "v.VoterId";
+
+    const query = `
+      SELECT ${selectCols.join(", ")}
+      FROM dbo.Votes v
+      INNER JOIN dbo.Voters vt ON v.VoterId = vt.VoterId
+      GROUP BY ${groupCols.join(", ")}
+      ORDER BY ${orderBy}
+    `;
+
+    console.log("Running query:", query);
+    const result = await pool.request().query(query);
+    console.log(`Found ${result.recordset.length} voters who voted`);
+
+    // Step 3 — build CSV rows dynamically using the same column list
+    const fmt = (dt) => dt
+      ? new Date(dt).toLocaleString("en-IN", {
+          timeZone: "Asia/Kolkata",
+          year: "numeric", month: "2-digit", day: "2-digit",
+          hour: "2-digit", minute: "2-digit",
+        })
+      : "";
+
+    const dataRows = result.recordset.map((r) => {
+      const row = [r.VoterId];
+
+      for (const col of ["FullName", "Email", "StudentId", "Department", "Year", "Batch", "Course", "Phone"]) {
+        if (has(col)) row.push(`"${(r[col] || "").toString().replace(/"/g, '""')}"`);
+      }
+
+      row.push(r.VotesCast || 0);
+      row.push(`"${fmt(r.FirstVote)}"`);
+      row.push(`"${fmt(r.LastVote)}"`);
+      return row;
+    });
+
+    const csv = [csvHeaders.join(","), ...dataRows.map((row) => row.join(","))].join("\n");
+
+    console.log("✅ Turnout CSV generated successfully");
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=turnout_report.csv");
+    res.send(csv);
+
+  } catch (err) {
+    console.error("❌ Turnout report error:", err);
+    res.status(500).json({ error: "Failed to generate report", details: err.message });
   }
-);
+});
 
 module.exports = router;

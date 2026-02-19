@@ -1,9 +1,11 @@
-// backend/routes/candidates.js
+// backend/routes/candidates.js - FIXED: Correct middleware import
 
 const express = require("express");
 const sql = require("mssql");
 const pool = require("../config/db");
-const { authenticateToken, requireAdmin } = require("../middleware/auth");
+
+// ✅ FIX: Use isAdmin instead of requireAdmin
+const { authenticateToken, isAdmin } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -30,8 +32,11 @@ router.get("/", authenticateToken, async (req, res) => {
    POST add candidate
    Calls: sp_AddCandidate
    =========================================================== */
-router.post("/", authenticateToken, requireAdmin, async (req, res) => {
+router.post("/", authenticateToken, isAdmin, async (req, res) => {
   try {
+    console.log("=== Adding Candidate via Stored Proc ===");
+    console.log("Body:", req.body);
+
     const { Name, Position, Gender, Manifesto, PhotoUrl, IsActive } = req.body;
 
     if (!Name || !Position) {
@@ -51,13 +56,16 @@ router.post("/", authenticateToken, requireAdmin, async (req, res) => {
 
     const result = await request.execute("sp_AddCandidate");
 
+    console.log("✅ Candidate added successfully");
+    console.log("New CandidateId:", result.output.CandidateId);
+
     res.json({
       success: true,
       CandidateId: result.output.CandidateId,
     });
   } catch (err) {
     console.error("❌ Error adding candidate:", err);
-    res.status(500).json({ error: "Failed to add candidate" });
+    res.status(500).json({ error: "Failed to add candidate", details: err.message });
   }
 });
 
@@ -65,8 +73,12 @@ router.post("/", authenticateToken, requireAdmin, async (req, res) => {
    PUT update candidate
    Calls: sp_UpdateCandidate
    =========================================================== */
-router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
+router.put("/:id", authenticateToken, isAdmin, async (req, res) => {
   try {
+    console.log("=== Updating Candidate via Stored Proc ===");
+    console.log("ID:", req.params.id);
+    console.log("Body:", req.body);
+
     const { id } = req.params;
     const { Name, Position, Gender, Manifesto, PhotoUrl, IsActive } = req.body;
 
@@ -87,10 +99,12 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
 
     await request.execute("sp_UpdateCandidate");
 
+    console.log("✅ Candidate updated successfully");
+
     res.json({ success: true, message: "Candidate updated successfully" });
   } catch (err) {
     console.error("❌ Error updating candidate:", err);
-    res.status(500).json({ error: "Failed to update candidate" });
+    res.status(500).json({ error: "Failed to update candidate", details: err.message });
   }
 });
 
@@ -98,8 +112,11 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
    DELETE candidate
    Calls: sp_DeleteCandidate
    =========================================================== */
-router.delete("/:id", authenticateToken, requireAdmin, async (req, res) => {
+router.delete("/:id", authenticateToken, isAdmin, async (req, res) => {
   try {
+    console.log("=== Deleting Candidate via Stored Proc ===");
+    console.log("ID:", req.params.id);
+
     const { id } = req.params;
 
     const request = pool.request();
@@ -107,10 +124,12 @@ router.delete("/:id", authenticateToken, requireAdmin, async (req, res) => {
 
     await request.execute("sp_DeleteCandidate");
 
+    console.log("✅ Candidate deleted successfully");
+
     res.json({ success: true, message: "Candidate deleted successfully" });
   } catch (err) {
     console.error("❌ Error deleting candidate:", err);
-    res.status(500).json({ error: "Failed to delete candidate" });
+    res.status(500).json({ error: "Failed to delete candidate", details: err.message });
   }
 });
 
